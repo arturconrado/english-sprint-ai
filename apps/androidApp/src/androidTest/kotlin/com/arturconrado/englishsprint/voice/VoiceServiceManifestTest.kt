@@ -1,6 +1,7 @@
 package com.arturconrado.englishsprint.voice
 
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
 import androidx.test.core.app.ApplicationProvider
@@ -30,12 +31,16 @@ class VoiceServiceManifestTest {
 
     @Test
     fun application_has_no_boot_receiver() {
+        val bootReceivers = context.packageManager.queryBroadcastReceivers(
+            Intent(Intent.ACTION_BOOT_COMPLETED).setPackage(context.packageName),
+            PackageManager.ResolveInfoFlags.of(0),
+        )
         val packageInfo = context.packageManager.getPackageInfo(
             context.packageName,
-            PackageManager.PackageInfoFlags.of(PackageManager.GET_RECEIVERS.toLong()),
+            PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()),
         )
 
-        assertTrue(packageInfo.receivers.isNullOrEmpty())
+        assertTrue(bootReceivers.isEmpty())
         assertNull(packageInfo.requestedPermissions?.find { it == "android.permission.RECEIVE_BOOT_COMPLETED" })
     }
 }

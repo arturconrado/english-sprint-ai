@@ -152,6 +152,14 @@ jobs:
             :apps:androidApp:lintDebug \
             :apps:androidApp:assembleDebug
 
+      - name: Enable and validate KVM acceleration
+        run: |
+          test -c /dev/kvm
+          sudo chmod 0666 /dev/kvm
+          test -r /dev/kvm
+          test -w /dev/kvm
+          stat --format='%A %U %G %n' /dev/kvm
+
       - name: Run Android instrumented lifecycle tests
         uses: reactivecircus/android-emulator-runner@1dcd0090116d15e7c562f8db72807de5e036a4ed # v2.34.0
         with:
