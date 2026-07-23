@@ -143,6 +143,7 @@
 			buildSettings = {
 				CODE_SIGNING_ALLOWED = NO;
 				DEVELOPMENT_TEAM = "";
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/../../shared/build/bin/iosSimulatorArm64/debugFramework",
@@ -171,6 +172,7 @@
 			buildSettings = {
 				CODE_SIGNING_ALLOWED = NO;
 				DEVELOPMENT_TEAM = "";
+				"EXCLUDED_ARCHS[sdk=iphonesimulator*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/../../shared/build/bin/iosSimulatorArm64/releaseFramework",
