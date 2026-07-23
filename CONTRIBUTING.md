@@ -22,3 +22,11 @@ the generated Kotlin packages. CI rejects generator drift.
 ## Commits
 
 Use short, imperative Conventional Commit messages.
+
+## Realtime changes
+
+Never place `OPENAI_API_KEY`, provider call IDs, raw SDP, audio or transcripts
+in mobile code, fixtures, logs or pull-request artifacts. The standard test
+suite must use fakes; real provider traffic belongs only in the manually
+dispatched workflow. Android voice changes require the physical validation
+matrix before the PR can leave draft.
