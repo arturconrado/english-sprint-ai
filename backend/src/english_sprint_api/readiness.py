@@ -6,7 +6,7 @@ from redis.asyncio import Redis
 
 from english_sprint_api.config import Settings
 
-MIGRATION_HEAD = "0001_phase0_baseline"
+MIGRATION_HEAD = "0002_voice_sessions"
 Check = dict[str, str]
 AsyncCheck = Callable[[Settings], Awaitable[Check]]
 
@@ -16,7 +16,12 @@ def dependency(name: str, healthy: bool) -> Check:
 
 
 async def check_configuration(settings: Settings) -> Check:
-    valid = bool(settings.database_url and settings.redis_url and settings.app_env)
+    valid = bool(
+        settings.database_url
+        and settings.redis_url
+        and settings.app_env
+        and settings.realtime_configuration_valid
+    )
     return dependency("configuration", valid)
 
 
@@ -40,7 +45,7 @@ async def check_redis(settings: Settings) -> Check:
     except (OSError, TimeoutError):
         return dependency("redis", False)
     finally:
-        await client.close()
+        await client.connection_pool.disconnect()
 
 
 async def check_migrations(settings: Settings) -> Check:
