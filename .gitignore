@@ -1,0 +1,42 @@
+# macOS and IDEs
+.DS_Store
+.idea/
+*.iml
+*.xcuserstate
+xcuserdata/
+DerivedData/
+
+# Gradle and Kotlin
+.gradle/
+**/build/
+local.properties
+kotlin-js-store/
+
+# Python
+.venv/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+.openapi-generator/
+.cache/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+
+# Infrastructure data
+.terraform/
+*.tfstate
+*.tfstate.*

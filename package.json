@@ -1,0 +1,13 @@
+{
+  "name": "english-sprint-ai-tooling",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "lint:openapi": "spectral lint contracts/openapi.yaml"
+  },
+  "devDependencies": {
+    "@stoplight/spectral-cli": "6.16.2"
+  }
+}

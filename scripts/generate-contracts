@@ -1,0 +1,61 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CONTRACT="${PROJECT_ROOT}/contracts/openapi.yaml"
+PYTHON_OUTPUT="${PROJECT_ROOT}/backend/src/generated/models.py"
+KOTLIN_ROOT="${PROJECT_ROOT}/shared/src"
+TEMP_DIR="$(mktemp -d)"
+GENERATOR_VERSION="7.22.0"
+GENERATOR_SHA256="3f1e6ce5c6ad4f15242c6170ab43aad4bad771622617eeece4a7d4f72ffaf329"
+GENERATOR_CACHE="${PROJECT_ROOT}/.cache/openapi-generator"
+GENERATOR_JAR="${GENERATOR_CACHE}/openapi-generator-cli-${GENERATOR_VERSION}.jar"
+
+cleanup() {
+  rm -rf "${TEMP_DIR}"
+}
+trap cleanup EXIT
+
+mkdir -p "${GENERATOR_CACHE}"
+if [[ ! -f "${GENERATOR_JAR}" ]]; then
+  curl --fail --location --silent --show-error \
+    "https://repo.maven.apache.org/maven2/org/openapitools/openapi-generator-cli/${GENERATOR_VERSION}/openapi-generator-cli-${GENERATOR_VERSION}.jar" \
+    --output "${GENERATOR_JAR}"
+fi
+
+printf '%s  %s\n' "${GENERATOR_SHA256}" "${GENERATOR_JAR}" | shasum -a 256 --check --status
+
+uv run --project "${PROJECT_ROOT}/backend" datamodel-codegen \
+  --input "${CONTRACT}" \
+  --input-file-type openapi \
+  --output "${PYTHON_OUTPUT}" \
+  --output-model-type pydantic_v2.BaseModel \
+  --target-python-version 3.13 \
+  --use-standard-collections \
+  --use-union-operator \
+  --disable-timestamp \
+  --formatters ruff-format ruff-check
+
+java -jar "${GENERATOR_JAR}" generate \
+  --input-spec "${CONTRACT}" \
+  --generator-name kotlin \
+  --output "${TEMP_DIR}/kotlin" \
+  --library multiplatform \
+  --package-name com.arturconrado.englishsprint.generated \
+  --api-package com.arturconrado.englishsprint.generated.api \
+  --model-package com.arturconrado.englishsprint.generated.dto \
+  --additional-properties dateLibrary=kotlinx-datetime,omitGradleWrapper=true,omitGradlePluginVersions=true,hideGenerationTimestamp=true \
+  --global-property apiDocs=false,apiTests=false,modelDocs=false,modelTests=false
+
+find "${KOTLIN_ROOT}" -type d -path "*/com/arturconrado/englishsprint/generated" \
+  -prune -exec rm -rf {} +
+
+while IFS= read -r source_set; do
+  relative="${source_set#"${TEMP_DIR}/kotlin/src/"}"
+  destination="${KOTLIN_ROOT}/${relative}"
+  mkdir -p "${destination}"
+  cp -R "${source_set}/." "${destination}/"
+done < <(find "${TEMP_DIR}/kotlin/src" -type d -path "*/kotlin" | sort)
+
+find "${KOTLIN_ROOT}" -type f -path "*/com/arturconrado/englishsprint/generated/*.kt" \
+  -exec perl -0777 -pi -e 's/[ \t]+(?=\r?\n)//g; s/\s+\z/\n/' {} +

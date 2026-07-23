@@ -1,0 +1,99 @@
+openapi: 3.0.3
+info:
+  title: English Sprint AI API
+  version: 0.1.0
+  description: Contract-first API for the English Sprint AI platform.
+servers:
+  - url: http://localhost:8000
+    description: Local development
+tags:
+  - name: Operations
+    description: Process health and dependency readiness.
+paths:
+  /healthz:
+    get:
+      tags:
+        - Operations
+      operationId: getHealth
+      summary: Check process liveness
+      description: Returns without contacting external dependencies.
+      responses:
+        "200":
+          description: The API process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+  /readyz:
+    get:
+      tags:
+        - Operations
+      operationId: getReadiness
+      summary: Check service readiness
+      description: Checks configuration, PostgreSQL, Redis, and migration state.
+      responses:
+        "200":
+          description: Every required dependency is ready.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+        "503":
+          description: At least one required dependency is unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessResponse"
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - alive
+    DependencyName:
+      type: string
+      enum:
+        - configuration
+        - postgresql
+        - redis
+        - migrations
+    DependencyStatus:
+      type: string
+      enum:
+        - ok
+        - error
+    DependencyCheck:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - status
+      properties:
+        name:
+          $ref: "#/components/schemas/DependencyName"
+        status:
+          $ref: "#/components/schemas/DependencyStatus"
+    ReadinessResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - checks
+      properties:
+        status:
+          type: string
+          enum:
+            - ready
+            - not_ready
+        checks:
+          type: array
+          minItems: 4
+          maxItems: 4
+          items:
+            $ref: "#/components/schemas/DependencyCheck"

@@ -1,0 +1,7 @@
+* text=auto eol=lf
+*.pbxproj text eol=lf
+*.xcscheme text eol=lf
+gradlew text eol=lf
+*.jar binary
+*.png binary
+*.jpg binary
