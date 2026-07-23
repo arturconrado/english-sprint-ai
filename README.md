@@ -38,7 +38,7 @@ uv sync --project backend --group dev --locked
 ```bash
 ./scripts/verify-contracts
 uv run --project backend ruff check backend
-uv run --project backend mypy backend/src backend/tests
+uv run --project backend mypy --config-file backend/pyproject.toml backend/src backend/tests
 uv run --project backend pytest backend/tests
 ./gradlew :shared:testAndroidHostTest :apps:androidApp:assembleDebug
 ```

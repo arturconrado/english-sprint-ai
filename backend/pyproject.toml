@@ -64,6 +64,7 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = [
     "alembic.*",
+    "asyncpg",
     "asyncpg.*",
     "opentelemetry.instrumentation.*"
 ]

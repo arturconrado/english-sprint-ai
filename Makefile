@@ -8,7 +8,7 @@ contract-check:
 
 backend-check:
 	uv run --project backend ruff check backend
-	uv run --project backend mypy backend/src backend/tests
+	uv run --project backend mypy --config-file backend/pyproject.toml backend/src backend/tests
 	uv run --project backend pytest backend/tests
 
 services:
