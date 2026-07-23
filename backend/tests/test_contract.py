@@ -52,6 +52,19 @@ def test_contract_is_valid_and_matches_runtime_routes() -> None:
     assert actual == expected
 
 
+def test_realtime_contract_uses_raw_sdp_and_internal_identifiers() -> None:
+    contract = load_contract()
+    create = contract["paths"]["/v1/realtime/calls"]["post"]
+    success = create["responses"]["201"]
+
+    assert contract["openapi"] == "3.1.0"
+    assert "application/sdp" in create["requestBody"]["content"]
+    assert "application/sdp" in success["content"]
+    assert "X-Voice-Session-Id" in success["headers"]
+    assert "Location" in success["headers"]
+    assert "call_id" not in str(success).lower()
+
+
 async def test_live_responses_match_contract(monkeypatch: MonkeyPatch) -> None:
     async def healthy_checks(_: Settings) -> list[Check]:
         return [

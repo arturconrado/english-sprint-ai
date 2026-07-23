@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${repository_root}"
+
+if rg --pcre2 --line-number \
+  '^\s*uses:\s*[^@\s]+@(?![0-9a-f]{40}(?:\s|$))' \
+  .github/workflows; then
+  echo "Every third-party GitHub Action must be pinned to a full commit SHA." >&2
+  exit 1
+fi
+
+if rg --line-number \
+  'image:\s+\S+:(latest|main|master)\b' \
+  .github/workflows infrastructure; then
+  echo "Container images must use immutable release-version tags." >&2
+  exit 1
+fi
+
+if rg --line-number \
+  '(SNAPSHOT|\[[^]]*,[^]]*\]|\+["'\'']?$)' \
+  --glob '*.gradle' --glob '*.gradle.kts' --glob 'libs.versions.toml' .; then
+  echo "Gradle dependencies must use exact release versions." >&2
+  exit 1
+fi
