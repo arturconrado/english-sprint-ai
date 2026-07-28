@@ -49,3 +49,18 @@ async def test_readyz_returns_503_when_a_dependency_fails(monkeypatch: MonkeyPat
 
     assert response.status_code == 503
     assert response.json()["status"] == "not_ready"
+
+
+async def test_realtime_configuration_is_required_only_when_enabled() -> None:
+    disabled = await readiness_checks(
+        Settings(app_env="test", otel_enabled=False, realtime_enabled=False),
+        checks=(make_check("configuration", "ok"),),
+    )
+    enabled_without_secrets = Settings(
+        app_env="test",
+        otel_enabled=False,
+        realtime_enabled=True,
+    )
+
+    assert disabled == [{"name": "configuration", "status": "ok"}]
+    assert enabled_without_secrets.realtime_configuration_valid is False

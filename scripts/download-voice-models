@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUTPUT_DIR="${VOICE_MODELS_DIR:-${PROJECT_ROOT}/apps/androidApp/build/generated/voiceModels/assets}"
+MARKER="${OUTPUT_DIR}/.complete"
+ENGLISH_MODEL="vosk-model-small-en-us-0.15"
+PORTUGUESE_MODEL="vosk-model-small-pt-0.3"
+ENGLISH_SHA256="30f26242c4eb449f948e42cb302dd7a686cb29a3423a8367f99ff41780942498"
+PORTUGUESE_SHA256="6e1ce909032e1afa7a88e68a3d628ecafff302bdf195befab308826c395e93b7"
+
+if [[ -f "${MARKER}" ]] \
+  && [[ -d "${OUTPUT_DIR}/voice-models/${ENGLISH_MODEL}" ]] \
+  && [[ -d "${OUTPUT_DIR}/voice-models/${PORTUGUESE_MODEL}" ]]; then
+  exit 0
+fi
+
+case "${OUTPUT_DIR}" in
+  "${PROJECT_ROOT}"/apps/androidApp/build/*) ;;
+  *)
+    echo "Refusing to replace voice models outside the Android build directory." >&2
+    exit 1
+    ;;
+esac
+
+TEMP_DIR="$(mktemp -d)"
+cleanup() {
+  rm -rf "${TEMP_DIR}"
+}
+trap cleanup EXIT
+
+curl --fail --location --silent --show-error \
+  "https://alphacephei.com/vosk/models/${ENGLISH_MODEL}.zip" \
+  --output "${TEMP_DIR}/${ENGLISH_MODEL}.zip"
+curl --fail --location --silent --show-error \
+  "https://alphacephei.com/vosk/models/${PORTUGUESE_MODEL}.zip" \
+  --output "${TEMP_DIR}/${PORTUGUESE_MODEL}.zip"
+
+printf '%s  %s\n' "${ENGLISH_SHA256}" "${TEMP_DIR}/${ENGLISH_MODEL}.zip" \
+  | shasum -a 256 --check --status
+printf '%s  %s\n' "${PORTUGUESE_SHA256}" "${TEMP_DIR}/${PORTUGUESE_MODEL}.zip" \
+  | shasum -a 256 --check --status
+
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_DIR}/voice-models"
+unzip -q "${TEMP_DIR}/${ENGLISH_MODEL}.zip" -d "${OUTPUT_DIR}/voice-models"
+unzip -q "${TEMP_DIR}/${PORTUGUESE_MODEL}.zip" -d "${OUTPUT_DIR}/voice-models"
+printf '%s\n%s\n' "${ENGLISH_SHA256}" "${PORTUGUESE_SHA256}" >"${MARKER}"

@@ -33,6 +33,10 @@ transcription or retrieval.
 4. AI efficiency, pedagogy, career mode, full iOS native integrations, and
    commercial operations.
 
-The first technical product gate is a ten-to-fifteen-minute Android conversation
+The first technical product gate is a thirty-minute Android conversation
 over Bluetooth with the screen off, interruption, correction and retry,
 headset disconnect/reconnect, verbal completion, and persisted progress.
+
+The Phase 1 implementation is detailed in
+[`realtime-voice-architecture.md`](realtime-voice-architecture.md). Physical
+acceptance remains distinct from emulator and contract validation.

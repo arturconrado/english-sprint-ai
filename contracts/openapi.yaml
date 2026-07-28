@@ -1,7 +1,7 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
   title: English Sprint AI API
-  version: 0.1.0
+  version: 0.2.0
   description: Contract-first API for the English Sprint AI platform.
 servers:
   - url: http://localhost:8000
@@ -9,6 +9,8 @@ servers:
 tags:
   - name: Operations
     description: Process health and dependency readiness.
+  - name: Realtime
+    description: Realtime voice call signaling and lifecycle.
 paths:
   /healthz:
     get:
@@ -44,7 +46,142 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ReadinessResponse"
+  /v1/realtime/calls:
+    post:
+      tags:
+        - Realtime
+      operationId: createRealtimeCall
+      summary: Create a realtime voice call
+      description: Exchanges an Android WebRTC offer for a provider SDP answer.
+      parameters:
+        - $ref: "#/components/parameters/InstallationId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/sdp:
+            schema:
+              type: string
+              minLength: 1
+              maxLength: 65536
+      responses:
+        "201":
+          description: The realtime call was created.
+          headers:
+            X-Voice-Session-Id:
+              description: Internal English Sprint voice-session identifier.
+              required: true
+              schema:
+                type: string
+                format: uuid
+            Location:
+              description: Relative URL for session metadata and cleanup.
+              required: true
+              schema:
+                type: string
+                pattern: "^/v1/realtime/calls/[0-9a-f-]{36}$"
+          content:
+            application/sdp:
+              schema:
+                type: string
+                minLength: 1
+                maxLength: 65536
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "429":
+          $ref: "#/components/responses/Problem"
+        "502":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+        "504":
+          $ref: "#/components/responses/Problem"
+        "500":
+          $ref: "#/components/responses/Problem"
+  /v1/realtime/calls/{session_id}:
+    parameters:
+      - $ref: "#/components/parameters/VoiceSessionId"
+    get:
+      tags:
+        - Realtime
+      operationId: getRealtimeCall
+      summary: Read sanitized realtime-call metadata
+      description: Returns operational metadata without provider identifiers or conversation data.
+      responses:
+        "200":
+          description: Current call metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceSessionMetadata"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "500":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+    delete:
+      tags:
+        - Realtime
+      operationId: deleteRealtimeCall
+      summary: Idempotently terminate a realtime call
+      description: Terminates an active call and succeeds when it is already absent.
+      parameters:
+        - name: X-Termination-Reason
+          in: header
+          required: false
+          schema:
+            $ref: "#/components/schemas/TerminationReason"
+      responses:
+        "204":
+          description: The call is absent or termination has started.
+        "400":
+          $ref: "#/components/responses/Problem"
+        "500":
+          $ref: "#/components/responses/Problem"
+        "502":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
 components:
+  parameters:
+    InstallationId:
+      name: X-Installation-Id
+      in: header
+      required: true
+      description: Opaque installation identifier. It is HMAC-hashed before persistence.
+      schema:
+        type: string
+        minLength: 16
+        maxLength: 128
+        pattern: "^[A-Za-z0-9._-]+$"
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        format: uuid
+    VoiceSessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Problem:
+      description: A typed, sanitized API failure.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/ProblemDetails"
   schemas:
     HealthResponse:
       type: object
@@ -97,3 +234,97 @@ components:
           maxItems: 4
           items:
             $ref: "#/components/schemas/DependencyCheck"
+    VoiceSessionStatus:
+      type: string
+      enum:
+        - creating
+        - active
+        - ending
+        - ended
+        - failed
+        - expired
+    TerminationReason:
+      type: string
+      enum:
+        - user_finished
+        - offline_command
+        - notification_action
+        - route_lost_timeout
+        - network_failure
+        - provider_error
+        - app_removed
+        - max_duration
+        - server_shutdown
+        - unknown
+    VoiceSessionMetadata:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - status
+        - provider
+        - model
+        - created_at
+        - updated_at
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/VoiceSessionStatus"
+        provider:
+          type: string
+        model:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        ended_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        duration_seconds:
+          type:
+            - integer
+            - "null"
+          minimum: 0
+        termination_reason:
+          oneOf:
+            - $ref: "#/components/schemas/TerminationReason"
+            - type: "null"
+    ProblemDetails:
+      type: object
+      additionalProperties: false
+      required:
+        - code
+        - title
+        - status
+        - detail
+        - retryable
+        - request_id
+      properties:
+        code:
+          type: string
+          pattern: "^[a-z0-9_]+$"
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        retryable:
+          type: boolean
+        request_id:
+          type: string
+          format: uuid

@@ -1,0 +1,96 @@
+name: Realtime E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: realtime-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  realtime-e2e:
+    name: realtime-e2e
+    if: github.repository == 'arturconrado/english-sprint-ai'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:17.5-alpine
+        env:
+          POSTGRES_DB: english_sprint
+          POSTGRES_USER: english_sprint
+          POSTGRES_PASSWORD: english_sprint
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U english_sprint -d english_sprint"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:8.0.3-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql://english_sprint:english_sprint@localhost:5432/english_sprint
+      REDIS_URL: redis://localhost:6379/0
+      OTEL_ENABLED: "false"
+      REALTIME_ENABLED: "true"
+      REALTIME_PROVIDER: openai
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_REALTIME_MODEL: gpt-realtime-2.1-mini
+      OPENAI_REALTIME_VOICE: marin
+      INSTALLATION_HASH_SECRET: realtime-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Require protected provider secret
+        run: test -n "${OPENAI_API_KEY}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.11.7"
+          enable-cache: true
+
+      - name: Install locked dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          uv sync --project backend --group dev --locked
+
+      - name: Exercise real WebRTC media and cleanup
+        working-directory: backend
+        run: |
+          uv run alembic upgrade head
+          uv run uvicorn english_sprint_api.main:app \
+            --app-dir src --host 127.0.0.1 --port 8000 &
+          backend_pid=$!
+          trap 'kill "${backend_pid}" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:8000/readyz && break
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/readyz
+          node ../scripts/realtime-e2e.mjs

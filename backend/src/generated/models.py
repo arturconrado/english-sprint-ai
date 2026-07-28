@@ -4,8 +4,9 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, conint, constr
 
 
 class Status(StrEnum):
@@ -50,3 +51,53 @@ class ReadinessResponse(BaseModel):
     )
     status: Status1
     checks: list[DependencyCheck] = Field(..., max_length=4, min_length=4)
+
+
+class VoiceSessionStatus(StrEnum):
+    creating = "creating"
+    active = "active"
+    ending = "ending"
+    ended = "ended"
+    failed = "failed"
+    expired = "expired"
+
+
+class TerminationReason(StrEnum):
+    user_finished = "user_finished"
+    offline_command = "offline_command"
+    notification_action = "notification_action"
+    route_lost_timeout = "route_lost_timeout"
+    network_failure = "network_failure"
+    provider_error = "provider_error"
+    app_removed = "app_removed"
+    max_duration = "max_duration"
+    server_shutdown = "server_shutdown"
+    unknown = "unknown"
+
+
+class VoiceSessionMetadata(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    session_id: UUID
+    status: VoiceSessionStatus
+    provider: str
+    model: str
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    started_at: AwareDatetime | None = None
+    ended_at: AwareDatetime | None = None
+    duration_seconds: conint(ge=0) | None = None
+    termination_reason: TerminationReason | None = None
+
+
+class ProblemDetails(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    code: constr(pattern=r"^[a-z0-9_]+$")
+    title: str
+    status: conint(ge=400, le=599)
+    detail: str
+    retryable: bool
+    request_id: UUID
