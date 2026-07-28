@@ -9,10 +9,19 @@ from english_sprint_api.pedagogy.repository import EvaluationWorkRecord
 from english_sprint_api.pedagogy.worker import AttemptEvaluator
 
 
+class FakeConversationQueue:
+    def __init__(self) -> None:
+        self.enqueued: list[UUID] = []
+
+    async def enqueue(self, attempt_id: UUID) -> None:
+        self.enqueued.append(attempt_id)
+
+
 class FakeTranscripts:
     def __init__(self, transcript: str | None) -> None:
         self.transcript = transcript
         self.deleted: list[UUID] = []
+        self.instructions: dict[UUID, str] = {}
 
     async def get(self, attempt_id: UUID) -> str | None:
         del attempt_id
@@ -20,6 +29,9 @@ class FakeTranscripts:
 
     async def delete(self, attempt_id: UUID) -> None:
         self.deleted.append(attempt_id)
+
+    async def put_instruction(self, attempt_id: UUID, instruction: str) -> None:
+        self.instructions[attempt_id] = instruction
 
 
 class FakeRepository:
@@ -84,12 +96,19 @@ async def test_evaluator_requires_matching_attempt_and_deletes_transcript() -> N
     )
     repository = FakeRepository(attempt_id)
     transcripts = FakeTranscripts("A completed answer.")
-    evaluator = AttemptEvaluator(repository, transcripts, FakeProvider(result))
+    conversation_queue = FakeConversationQueue()
+    evaluator = AttemptEvaluator(
+        repository,
+        transcripts,
+        FakeProvider(result),
+        conversation_queue,
+    )
 
     await evaluator.evaluate(attempt_id)
 
     assert repository.saved == result
     assert transcripts.deleted == [attempt_id]
+    assert conversation_queue.enqueued == [attempt_id]
 
 
 def test_content_key_fixture_is_256_bits() -> None:

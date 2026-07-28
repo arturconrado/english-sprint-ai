@@ -45,6 +45,10 @@ class TransientTranscriptStore:
     def _pending_key(session_id: UUID) -> str:
         return f"pedagogy:pending-transcript:{session_id}"
 
+    @staticmethod
+    def _instruction_key(attempt_id: UUID) -> str:
+        return f"pedagogy:attempt-instruction:{attempt_id}"
+
     def _encrypt(self, identity: str, transcript: str) -> str:
         nonce = os.urandom(12)
         ciphertext = self._cipher.encrypt(
@@ -104,6 +108,22 @@ class TransientTranscriptStore:
             return False
         await self.put(attempt_id, self._decrypt(str(session_id), raw))
         return True
+
+    async def put_instruction(self, attempt_id: UUID, instruction: str) -> None:
+        await self._redis.set(
+            self._instruction_key(attempt_id),
+            self._encrypt(f"instruction:{attempt_id}", instruction),
+            ex=self._ttl,
+        )
+
+    async def get_instruction(self, attempt_id: UUID) -> str | None:
+        raw = await self._redis.get(self._instruction_key(attempt_id))
+        if raw is None:
+            return None
+        return self._decrypt(f"instruction:{attempt_id}", raw)
+
+    async def delete_instruction(self, attempt_id: UUID) -> None:
+        await self._redis.delete(self._instruction_key(attempt_id))
 
     async def delete(self, attempt_id: UUID) -> None:
         await self._redis.delete(self._key(attempt_id))

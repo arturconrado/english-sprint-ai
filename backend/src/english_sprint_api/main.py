@@ -11,7 +11,7 @@ from english_sprint_api.config import Settings, get_settings
 from english_sprint_api.observability import configure_observability
 from english_sprint_api.pedagogy.content_store import TransientTranscriptStore
 from english_sprint_api.pedagogy.missions import MissionCatalog
-from english_sprint_api.pedagogy.queue import EvaluationQueue
+from english_sprint_api.pedagogy.queue import ConversationQueue, EvaluationQueue
 from english_sprint_api.pedagogy.repository import MissionRepository
 from english_sprint_api.pedagogy.routes import router as pedagogy_router
 from english_sprint_api.pedagogy.service import MissionService
@@ -75,6 +75,7 @@ def create_mission_service(configuration: Settings) -> MissionService:
         catalog=MissionCatalog(),
         repository=MissionRepository(configuration.database_url),
         queue=EvaluationQueue(configuration.redis_url),
+        conversation_queue=ConversationQueue(configuration.redis_url),
         store=PedagogyStore(
             configuration.redis_url,
             configuration.pedagogy_idempotency_ttl_seconds,
@@ -106,6 +107,7 @@ app.state.realtime_service = create_realtime_service(
     settings,
     app.state.mission_service,
 )
+app.state.mission_service.bind_realtime_control(app.state.realtime_service)
 app.state.settings = settings
 app.include_router(pedagogy_router)
 
@@ -296,10 +298,26 @@ async def create_realtime_call(
         mission_mode=mission_session_id is not None,
     )
     if mission_session_id is not None:
-        await request.app.state.mission_service.repository.link_voice_session(
-            mission_session_id,
-            answer.session_id,
-        )
+        try:
+            opening = await request.app.state.mission_service.open_voice_session(
+                mission_session_id,
+                answer.session_id,
+            )
+            await request.app.state.realtime_service.create_response(
+                answer.session_id,
+                opening.instruction,
+                {
+                    "mission_session_id": str(mission_session_id),
+                    "state": opening.state.state.value,
+                    "state_version": str(opening.state.state_version),
+                },
+            )
+        except Exception:
+            await request.app.state.realtime_service.delete_call(
+                answer.session_id,
+                "provider_error",
+            )
+            raise
     location = f"/v1/realtime/calls/{answer.session_id}"
     return Response(
         content=answer.sdp_answer,

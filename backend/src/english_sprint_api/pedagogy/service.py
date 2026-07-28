@@ -1,15 +1,19 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import secrets
+import socket
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
+from typing import Protocol
+from uuid import UUID, uuid4, uuid5
 
 from english_sprint_api.config import Settings
 from english_sprint_api.pedagogy.content_store import TransientTranscriptStore
-from english_sprint_api.pedagogy.generated_state import MissionEvent
+from english_sprint_api.pedagogy.generated_state import MissionEvent, MissionState
 from english_sprint_api.pedagogy.missions import MissionCatalog, MissionDefinition
 from english_sprint_api.pedagogy.orchestration import (
     InvalidMissionCommand,
@@ -17,9 +21,10 @@ from english_sprint_api.pedagogy.orchestration import (
     MissionSessionController,
     StaleMissionEvent,
 )
-from english_sprint_api.pedagogy.queue import EvaluationQueue
+from english_sprint_api.pedagogy.queue import ConversationQueue, EvaluationQueue
 from english_sprint_api.pedagogy.repository import (
     AttemptRecord,
+    ConversationDispatch,
     MissionRepository,
     MissionSessionRecord,
 )
@@ -44,6 +49,21 @@ class AttemptInput:
     used_time_extension: bool
 
 
+@dataclass(frozen=True, slots=True)
+class MissionOpening:
+    state: MissionSessionRecord
+    instruction: str
+
+
+class RealtimeConversationControl(Protocol):
+    async def create_response(
+        self,
+        session_id: UUID,
+        instructions: str,
+        metadata: dict[str, str],
+    ) -> None: ...
+
+
 class MissionService:
     def __init__(
         self,
@@ -53,13 +73,20 @@ class MissionService:
         queue: EvaluationQueue,
         store: PedagogyStore,
         transcripts: TransientTranscriptStore | None = None,
+        conversation_queue: ConversationQueue | None = None,
     ) -> None:
         self._settings = settings
         self.catalog = catalog
         self.repository = repository
         self.queue = queue
+        self.conversation_queue = conversation_queue
         self.store = store
         self.transcripts = transcripts
+        self._realtime_control: RealtimeConversationControl | None = None
+        self._conversation_task: asyncio.Task[None] | None = None
+
+    def bind_realtime_control(self, control: RealtimeConversationControl) -> None:
+        self._realtime_control = control
 
     def _require_enabled(self) -> None:
         if not self._settings.pedagogy_enabled:
@@ -94,9 +121,22 @@ class MissionService:
         if self._settings.pedagogy_enabled:
             await self.repository.sync_catalog(self.catalog)
             await self.queue.ensure_group()
+            if self.conversation_queue is not None:
+                await self.conversation_queue.ensure_group()
+                self._conversation_task = asyncio.create_task(
+                    self._run_conversation_queue(),
+                    name="pedagogy-conversation-control",
+                )
 
     async def shutdown(self) -> None:
+        if self._conversation_task is not None:
+            self._conversation_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await self._conversation_task
+            self._conversation_task = None
         await self.queue.close()
+        if self.conversation_queue is not None:
+            await self.conversation_queue.close()
         await self.store.close()
         if self.transcripts is not None:
             await self.transcripts.close()
@@ -251,9 +291,42 @@ class MissionService:
         voice_session_id: UUID,
         event: dict[str, object],
     ) -> None:
+        event_type = event.get("type")
+        if event_type == "response.done":
+            record = await self.repository.get_by_voice_session(voice_session_id)
+            if record is None:
+                return
+            if record.state is MissionState.SCENARIO_PRESENTING:
+                await self.apply_event(
+                    record.session_id,
+                    MissionEvent.SCENARIO_PRESENTED,
+                    record.state_version,
+                )
+            elif record.state is MissionState.CORRECTION_PRESENTING:
+                await self.apply_event(
+                    record.session_id,
+                    MissionEvent.CORRECTION_PRESENTED,
+                    record.state_version,
+                )
+            elif record.state is MissionState.TRANSFER_PRESENTING:
+                await self.apply_event(
+                    record.session_id,
+                    MissionEvent.TRANSFER_PRESENTED,
+                    record.state_version,
+                )
+            elif record.state is MissionState.MISSION_SUMMARIZING:
+                await self.repository.complete_session(
+                    session_id=record.session_id,
+                    idempotency_key=uuid5(
+                        UUID("436b487b-f990-41db-878e-7fc2e97fc142"),
+                        f"{record.session_id}:sideband-summary",
+                    ),
+                    expected_version=record.state_version,
+                )
+            return
         if (
             self.transcripts is None
-            or event.get("type") != "conversation.item.input_audio_transcription.completed"
+            or event_type != "conversation.item.input_audio_transcription.completed"
         ):
             return
         transcript = event.get("transcript")
@@ -269,6 +342,106 @@ class MissionService:
             await self.transcripts.put_pending(session_id, transcript)
         else:
             await self.transcripts.put(attempt_id, transcript)
+
+    async def open_voice_session(
+        self,
+        mission_session_id: UUID,
+        voice_session_id: UUID,
+    ) -> MissionOpening:
+        await self.repository.link_voice_session(
+            mission_session_id,
+            voice_session_id,
+        )
+        current = await self.repository.get_session(mission_session_id)
+        if current is None:
+            raise RealtimeError(
+                code="mission_session_not_found",
+                title="Mission session not found",
+                status=404,
+                detail="No mission session exists with this identifier.",
+            )
+        presenting = await self.apply_event(
+            mission_session_id,
+            MissionEvent.SESSION_STARTED,
+            current.state_version,
+        )
+        mission = self.get_mission(current.mission_id)
+        instruction = (
+            f"Present this scenario briefly: {mission.scenario} "
+            f"Then ask exactly this question: {mission.initial_question}"
+        )
+        return MissionOpening(presenting, instruction)
+
+    async def _run_conversation_queue(self) -> None:
+        queue = self.conversation_queue
+        if queue is None:
+            return
+        consumer = f"{socket.gethostname()}-{id(self)}"
+        while True:
+            processed = await queue.consume_once(
+                consumer,
+                self._dispatch_conversation,
+            )
+            if not processed:
+                await asyncio.sleep(0.25)
+
+    async def _dispatch_conversation(self, attempt_id: UUID) -> None:
+        control = self._realtime_control
+        if control is None:
+            raise RuntimeError("realtime_conversation_control_unavailable")
+        dispatch = await self.repository.conversation_dispatch(attempt_id)
+        instruction, event = await self._conversation_instruction(dispatch)
+        await control.create_response(
+            dispatch.voice_session_id,
+            instruction,
+            {
+                "attempt_id": str(dispatch.attempt_id),
+                "mission_session_id": str(dispatch.session_id),
+                "state": dispatch.state.value,
+                "state_version": str(dispatch.state_version),
+            },
+        )
+        if event is not None:
+            await self.apply_event(
+                dispatch.session_id,
+                event,
+                dispatch.state_version,
+            )
+        if dispatch.state is MissionState.CORRECTION_PREPARING and self.transcripts is not None:
+            await self.transcripts.delete_instruction(attempt_id)
+
+    async def _conversation_instruction(
+        self,
+        dispatch: ConversationDispatch,
+    ) -> tuple[str, MissionEvent | None]:
+        if dispatch.state is MissionState.CORRECTION_PREPARING:
+            instruction = (
+                await self.transcripts.get_instruction(dispatch.attempt_id)
+                if self.transcripts is not None
+                else None
+            )
+            return (
+                instruction
+                or (
+                    "Acknowledge one strength briefly, then ask the learner to answer "
+                    "again in their own words."
+                ),
+                MissionEvent.CORRECTION_PREPARED,
+            )
+        if dispatch.state is MissionState.TRANSFER_PRESENTING:
+            return (
+                "Ask exactly this new-context transfer question and nothing else: "
+                f"{dispatch.transfer_question}",
+                None,
+            )
+        if dispatch.state is MissionState.MISSION_SUMMARIZING:
+            return (
+                "Give a brief encouraging completion message. Mention that the mission "
+                "is complete and that the learner can review progress in the app. Do "
+                "not quote or reconstruct their transcript.",
+                None,
+            )
+        raise RuntimeError(f"unsupported_conversation_state:{dispatch.state.value}")
 
     async def command(
         self,

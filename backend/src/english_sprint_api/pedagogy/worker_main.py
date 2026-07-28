@@ -7,7 +7,7 @@ from english_sprint_api.config import get_settings
 from english_sprint_api.pedagogy.content_store import TransientTranscriptStore
 from english_sprint_api.pedagogy.missions import MissionCatalog
 from english_sprint_api.pedagogy.openai_evaluation import OpenAIResponsesEvaluationProvider
-from english_sprint_api.pedagogy.queue import EvaluationQueue
+from english_sprint_api.pedagogy.queue import ConversationQueue, EvaluationQueue
 from english_sprint_api.pedagogy.repository import MissionRepository
 from english_sprint_api.pedagogy.worker import AttemptEvaluator, run_worker
 
@@ -29,13 +29,20 @@ async def main() -> None:
         settings.pedagogy_content_ttl_seconds,
     )
     provider = OpenAIResponsesEvaluationProvider(settings)
-    evaluator = AttemptEvaluator(repository, transcripts, provider)
+    conversation_queue = ConversationQueue(settings.redis_url)
+    evaluator = AttemptEvaluator(
+        repository,
+        transcripts,
+        provider,
+        conversation_queue,
+    )
     await repository.sync_catalog(MissionCatalog())
     await queue.ensure_group()
     try:
         await run_worker(queue, evaluator, f"{socket.gethostname()}-{id(evaluator)}")
     finally:
         await transcripts.close()
+        await conversation_queue.close()
         await queue.close()
 
 

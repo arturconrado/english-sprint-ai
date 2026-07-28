@@ -283,6 +283,35 @@ class SessionFactory:
     async def get_call(self, session_id: UUID) -> SessionRecord | None:
         return await self._repository.get(session_id)
 
+    async def create_response(
+        self,
+        session_id: UUID,
+        instructions: str,
+        metadata: dict[str, str],
+    ) -> None:
+        sideband = self._sidebands.get(session_id)
+        if sideband is None:
+            raise RealtimeError(
+                code="sideband_unavailable",
+                title="Realtime control unavailable",
+                status=503,
+                detail="The realtime control channel is unavailable.",
+                retryable=True,
+            )
+        await sideband.send(
+            json.dumps(
+                {
+                    "type": "response.create",
+                    "response": {
+                        "instructions": instructions,
+                        "metadata": metadata,
+                    },
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
+
     async def delete_call(self, session_id: UUID, reason: str) -> None:
         task = self._tasks.pop(session_id, None)
         if task is not None and task is not asyncio.current_task():

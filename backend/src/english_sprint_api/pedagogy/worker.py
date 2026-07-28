@@ -4,7 +4,7 @@ import asyncio
 from typing import Protocol
 from uuid import UUID
 
-from english_sprint_api.pedagogy.corrections import select_corrections
+from english_sprint_api.pedagogy.corrections import CorrectionComposer, select_corrections
 from english_sprint_api.pedagogy.evaluation import CorrectionCandidate
 from english_sprint_api.pedagogy.openai_evaluation import (
     EvaluationResult,
@@ -41,6 +41,12 @@ class TranscriptStore(Protocol):
 
     async def delete(self, attempt_id: UUID) -> None: ...
 
+    async def put_instruction(self, attempt_id: UUID, instruction: str) -> None: ...
+
+
+class ConversationDispatchQueue(Protocol):
+    async def enqueue(self, attempt_id: UUID) -> None: ...
+
 
 class AttemptEvaluator:
     def __init__(
@@ -48,10 +54,12 @@ class AttemptEvaluator:
         repository: EvaluationRepository,
         transcripts: TranscriptStore,
         provider: EvaluationProvider,
+        conversation_queue: ConversationDispatchQueue | None = None,
     ) -> None:
         self._repository = repository
         self._transcripts = transcripts
         self._provider = provider
+        self._conversation_queue = conversation_queue
 
     async def evaluate(self, attempt_id: UUID) -> None:
         work = await self._repository.evaluation_work(attempt_id)
@@ -68,10 +76,19 @@ class AttemptEvaluator:
             raise RuntimeError("evaluation_attempt_mismatch")
         selected = select_corrections(result.evaluation.candidate_corrections)
         await self._repository.save_evaluation(result, selected)
+        if selected:
+            instruction = " ".join(
+                CorrectionComposer.compose(correction) for correction in selected
+            )
+            await self._transcripts.put_instruction(attempt_id, instruction)
+        if self._conversation_queue is not None:
+            await self._conversation_queue.enqueue(attempt_id)
         await self._transcripts.delete(attempt_id)
 
     async def fail(self, attempt_id: UUID, terminal: bool) -> None:
         await self._repository.fail_evaluation(attempt_id, terminal)
+        if terminal and self._conversation_queue is not None:
+            await self._conversation_queue.enqueue(attempt_id)
 
 
 async def run_worker(

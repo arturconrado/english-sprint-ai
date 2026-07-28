@@ -59,6 +59,16 @@ class EvaluationWorkRecord:
     recurrence_by_category: dict[str, float]
 
 
+@dataclass(frozen=True, slots=True)
+class ConversationDispatch:
+    attempt_id: UUID
+    session_id: UUID
+    voice_session_id: UUID
+    state: MissionState
+    state_version: int
+    transfer_question: str
+
+
 class MissionRepository:
     def __init__(self, database_url: str) -> None:
         self._database_url = database_url
@@ -279,6 +289,26 @@ class MissionRepository:
             if row is None:
                 return None
             return row["session_id"], row["attempt_id"]
+        finally:
+            await connection.close()
+
+    async def get_by_voice_session(
+        self,
+        voice_session_id: UUID,
+    ) -> MissionSessionRecord | None:
+        connection = await self._connect()
+        try:
+            row = await connection.fetchrow(
+                """
+                SELECT ms.*, m.id AS mission_id, mv.version AS mission_version
+                  FROM mission_sessions ms
+                  JOIN mission_versions mv ON mv.id = ms.mission_version_id
+                  JOIN missions m ON m.id = mv.mission_id
+                 WHERE ms.voice_session_id = $1
+                """,
+                voice_session_id,
+            )
+            return self._session(row) if row else None
         finally:
             await connection.close()
 
@@ -814,6 +844,36 @@ class MissionRepository:
                     sort_keys=True,
                 )
                 return EvaluationWorkRecord(attempt_id, context, recurrence)
+        finally:
+            await connection.close()
+
+    async def conversation_dispatch(self, attempt_id: UUID) -> ConversationDispatch:
+        connection = await self._connect()
+        try:
+            row = await connection.fetchrow(
+                """
+                SELECT a.id AS attempt_id, a.session_id, ms.voice_session_id,
+                       ms.state, ms.state_version, mv.definition
+                  FROM attempts a
+                  JOIN mission_sessions ms ON ms.id = a.session_id
+                  JOIN mission_versions mv ON mv.id = ms.mission_version_id
+                 WHERE a.id = $1
+                """,
+                attempt_id,
+            )
+            if row is None:
+                raise KeyError(attempt_id)
+            if row["voice_session_id"] is None:
+                raise RuntimeError("mission_voice_session_unavailable")
+            definition = json.loads(row["definition"])
+            return ConversationDispatch(
+                attempt_id=row["attempt_id"],
+                session_id=row["session_id"],
+                voice_session_id=row["voice_session_id"],
+                state=MissionState(row["state"]),
+                state_version=row["state_version"],
+                transfer_question=definition["transfer_question"],
+            )
         finally:
             await connection.close()
 
