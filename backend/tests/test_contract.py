@@ -20,6 +20,18 @@ def load_contract() -> dict[str, Any]:
     return contract
 
 
+def runtime_api_routes(routes: list[Any]) -> list[APIRoute]:
+    discovered: list[APIRoute] = []
+    for route in routes:
+        if isinstance(route, APIRoute):
+            discovered.append(route)
+            continue
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            discovered.extend(runtime_api_routes(list(included.routes)))
+    return discovered
+
+
 def dereference(schema: Any, contract: dict[str, Any]) -> Any:
     if isinstance(schema, list):
         return [dereference(value, contract) for value in schema]
@@ -44,8 +56,7 @@ def test_contract_is_valid_and_matches_runtime_routes() -> None:
     }
     actual = {
         (method, route.path)
-        for route in main.app.routes
-        if isinstance(route, APIRoute)
+        for route in runtime_api_routes(list(main.app.routes))
         for method in getattr(route, "methods", set())
     }
 

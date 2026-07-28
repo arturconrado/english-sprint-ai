@@ -1,10 +1,10 @@
 package com.arturconrado.englishsprint.domain
 
-import com.arturconrado.englishsprint.generated.pedagogy.MissionEvent
-import com.arturconrado.englishsprint.generated.pedagogy.MissionState
-import com.arturconrado.englishsprint.generated.pedagogy.MissionTransitionKey
-import com.arturconrado.englishsprint.generated.pedagogy.missionTerminalStates
-import com.arturconrado.englishsprint.generated.pedagogy.missionTransitions
+import com.arturconrado.englishsprint.pedagogy.generated.MissionEvent
+import com.arturconrado.englishsprint.pedagogy.generated.MissionState
+import com.arturconrado.englishsprint.pedagogy.generated.MissionTransitionKey
+import com.arturconrado.englishsprint.pedagogy.generated.missionTerminalStates
+import com.arturconrado.englishsprint.pedagogy.generated.missionTransitions
 
 data class MissionSessionSnapshot(
     val sessionId: String,

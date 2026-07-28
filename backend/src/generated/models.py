@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, conint, constr
@@ -101,3 +102,223 @@ class ProblemDetails(BaseModel):
     detail: str
     retryable: bool
     request_id: UUID
+
+
+class Mission(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: UUID
+    slug: str
+    version: conint(ge=1)
+    title: str
+    description: str
+    scenario: str
+    initial_question: str
+    transfer_question: str
+    target_skills: list[str] = Field(..., min_length=1)
+    expected_duration_minutes: conint(ge=1, le=30)
+    difficulty: str
+    maximum_attempts: Literal[3]
+    maximum_corrections: conint(ge=1, le=2)
+
+
+class MissionState(StrEnum):
+    MISSION_IDLE = "MISSION_IDLE"
+    MISSION_STARTING = "MISSION_STARTING"
+    SCENARIO_PRESENTING = "SCENARIO_PRESENTING"
+    FIRST_ATTEMPT_WAITING = "FIRST_ATTEMPT_WAITING"
+    FIRST_ATTEMPT_RECEIVED = "FIRST_ATTEMPT_RECEIVED"
+    FIRST_ATTEMPT_EVALUATING = "FIRST_ATTEMPT_EVALUATING"
+    CORRECTION_PREPARING = "CORRECTION_PREPARING"
+    CORRECTION_PRESENTING = "CORRECTION_PRESENTING"
+    RETRY_WAITING = "RETRY_WAITING"
+    RETRY_RECEIVED = "RETRY_RECEIVED"
+    RETRY_EVALUATING = "RETRY_EVALUATING"
+    TRANSFER_PRESENTING = "TRANSFER_PRESENTING"
+    TRANSFER_WAITING = "TRANSFER_WAITING"
+    TRANSFER_RECEIVED = "TRANSFER_RECEIVED"
+    TRANSFER_EVALUATING = "TRANSFER_EVALUATING"
+    MISSION_SUMMARIZING = "MISSION_SUMMARIZING"
+    MISSION_COMPLETED = "MISSION_COMPLETED"
+    MISSION_CANCELLED = "MISSION_CANCELLED"
+    MISSION_FAILED = "MISSION_FAILED"
+
+
+class CreateMissionSessionRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    mission_id: UUID
+    processing_consent: bool
+    content_retention_consent: bool
+
+
+class MissionSession(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    session_id: UUID
+    mission_id: UUID
+    mission_version: conint(ge=1)
+    state: MissionState
+    state_version: conint(ge=0)
+    processing_consent: bool
+    content_retention_consent: bool
+    voice_session_id: UUID | None = None
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+    completed_at: AwareDatetime | None = None
+
+
+class AttemptKind(StrEnum):
+    first = "first"
+    retry = "retry"
+    transfer = "transfer"
+
+
+class HelpLevel(StrEnum):
+    NO_HELP = "NO_HELP"
+    FIRST_WORD = "FIRST_WORD"
+    KEYWORDS = "KEYWORDS"
+    SHORT_MODEL = "SHORT_MODEL"
+    FULL_MODEL = "FULL_MODEL"
+
+
+class CreateAttemptRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    client_attempt_id: UUID
+    state_version: conint(ge=0)
+    kind: AttemptKind
+    help_level: HelpLevel
+    started_at: AwareDatetime
+    completed_at: AwareDatetime
+    used_time_extension: bool | None = False
+
+
+class EvaluationStatus(StrEnum):
+    queued = "queued"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+    dead_letter = "dead_letter"
+
+
+class AttemptReceipt(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    attempt_id: UUID
+    state: MissionState
+    state_version: conint(ge=0)
+    evaluation_status: EvaluationStatus
+
+
+class MissionCommand(StrEnum):
+    repeat_prompt = "repeat_prompt"
+    need_more_time = "need_more_time"
+    request_help = "request_help"
+    pause = "pause"
+    resume = "resume"
+    stop_response = "stop_response"
+    cancel = "cancel"
+    finish = "finish"
+
+
+class MissionCommandRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    command: MissionCommand
+    state_version: conint(ge=0)
+
+
+class StateVersionRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    state_version: conint(ge=0)
+
+
+class Event(StrEnum):
+    START_REQUESTED = "START_REQUESTED"
+    SESSION_STARTED = "SESSION_STARTED"
+    SCENARIO_PRESENTED = "SCENARIO_PRESENTED"
+    ATTEMPT_COMPLETED = "ATTEMPT_COMPLETED"
+    EVALUATION_QUEUED = "EVALUATION_QUEUED"
+    EVALUATION_SUCCEEDED = "EVALUATION_SUCCEEDED"
+    EVALUATION_FAILED = "EVALUATION_FAILED"
+    CORRECTION_PREPARED = "CORRECTION_PREPARED"
+    CORRECTION_PRESENTED = "CORRECTION_PRESENTED"
+    TRANSFER_PRESENTED = "TRANSFER_PRESENTED"
+    SUMMARY_COMPLETED = "SUMMARY_COMPLETED"
+    CANCEL_REQUESTED = "CANCEL_REQUESTED"
+    FAILURE_RECORDED = "FAILURE_RECORDED"
+
+
+class InternalAdvanceRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    event: Event
+    state_version: conint(ge=0)
+
+
+class SkillState(StrEnum):
+    UNKNOWN = "UNKNOWN"
+    RECOGNIZED = "RECOGNIZED"
+    PRODUCED_WITH_HELP = "PRODUCED_WITH_HELP"
+    PRODUCED_SPONTANEOUSLY = "PRODUCED_SPONTANEOUSLY"
+    TRANSFERRED = "TRANSFERRED"
+
+
+class UserSkillState(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    skill_id: UUID
+    slug: str
+    state: SkillState
+    updated_at: AwareDatetime
+
+
+class ReviewType(StrEnum):
+    targeted_correction = "targeted_correction"
+    generic_skill = "generic_skill"
+
+
+class Status2(StrEnum):
+    scheduled = "scheduled"
+    due = "due"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class ReviewItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    review_id: UUID
+    mission_id: UUID
+    skill_id: UUID
+    review_type: ReviewType
+    scheduled_at: AwareDatetime
+    status: Status2
+
+
+class MissionSummary(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    session_id: UUID
+    mission_id: UUID
+    state: MissionState
+    attempt_count: conint(ge=0, le=3)
+    strength: str | None = None
+    primary_correction: str | None = None
+    skill_state: SkillState | None = None
+    next_review_at: AwareDatetime | None = None
+    content_retained: bool
+    evidence_available: bool

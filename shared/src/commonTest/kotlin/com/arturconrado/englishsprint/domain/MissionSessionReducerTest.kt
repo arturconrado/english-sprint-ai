@@ -1,7 +1,7 @@
 package com.arturconrado.englishsprint.domain
 
-import com.arturconrado.englishsprint.generated.pedagogy.MissionEvent
-import com.arturconrado.englishsprint.generated.pedagogy.MissionState
+import com.arturconrado.englishsprint.pedagogy.generated.MissionEvent
+import com.arturconrado.englishsprint.pedagogy.generated.MissionState
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith

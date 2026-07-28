@@ -36,6 +36,17 @@ class Settings(BaseSettings):
     realtime_vad_threshold: float = Field(default=0.55, ge=0, le=1)
     realtime_vad_prefix_padding_ms: int = Field(default=300, ge=0, le=2000)
     realtime_vad_silence_duration_ms: int = Field(default=600, ge=100, le=5000)
+    pedagogy_enabled: bool = False
+    internal_api_token: SecretStr | None = None
+    pedagogical_evaluation_model: str = "gpt-5.4-mini-2026-03-17"
+    mission_summary_model: str = "gpt-5.4-mini-2026-03-17"
+    pedagogy_session_token_days: int = Field(default=35, ge=1, le=35)
+    pedagogy_idempotency_ttl_seconds: int = Field(default=300, ge=60, le=900)
+    pedagogy_content_ttl_seconds: int = Field(default=3600, ge=60, le=3600)
+    content_retention_enabled: bool = False
+    content_retention_days: int = Field(default=30, ge=1, le=30)
+    content_encryption_key: SecretStr | None = None
+    content_encryption_key_version: str = "v1"
 
     @property
     def realtime_configuration_valid(self) -> bool:
@@ -47,6 +58,16 @@ class Settings(BaseSettings):
             and self.openai_realtime_model
             and self.openai_realtime_voice
         )
+
+    @property
+    def pedagogy_configuration_valid(self) -> bool:
+        if not self.pedagogy_enabled:
+            return True
+        if not self.installation_hash_secret or not self.pedagogical_evaluation_model:
+            return False
+        if self.content_retention_enabled and not self.content_encryption_key:
+            return False
+        return True
 
 
 @lru_cache

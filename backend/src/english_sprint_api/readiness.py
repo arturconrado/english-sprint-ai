@@ -6,7 +6,7 @@ from redis.asyncio import Redis
 
 from english_sprint_api.config import Settings
 
-MIGRATION_HEAD = "0002_voice_sessions"
+MIGRATION_HEAD = "0003_speak_loop"
 Check = dict[str, str]
 AsyncCheck = Callable[[Settings], Awaitable[Check]]
 
@@ -21,6 +21,7 @@ async def check_configuration(settings: Settings) -> Check:
         and settings.redis_url
         and settings.app_env
         and settings.realtime_configuration_valid
+        and settings.pedagogy_configuration_valid
     )
     return dependency("configuration", valid)
 

@@ -1,5 +1,5 @@
 // Generated from contracts/pedagogy/mission-state-machine.json. Do not edit.
-package com.arturconrado.englishsprint.generated.pedagogy
+package com.arturconrado.englishsprint.pedagogy.generated
 
 enum class MissionState {
     MISSION_IDLE,
