@@ -17,6 +17,7 @@ from english_sprint_api.realtime.models import (
     RealtimeProvider,
     SessionRecord,
     SidebandConnection,
+    SidebandEventObserver,
     UsageObserver,
 )
 from english_sprint_api.realtime.repository import VoiceSessionRepository
@@ -36,6 +37,7 @@ class SessionFactory:
         repository: VoiceSessionRepository,
         store: RealtimeStore,
         usage_observer: UsageObserver | None = None,
+        sideband_event_observer: SidebandEventObserver | None = None,
     ) -> None:
         self._settings = settings
         self._provider = provider
@@ -43,6 +45,7 @@ class SessionFactory:
         self._repository = repository
         self._store = store
         self._usage_observer = usage_observer or TelemetryUsageObserver()
+        self._sideband_event_observer = sideband_event_observer
         self._sidebands: dict[UUID, SidebandConnection] = {}
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
 
@@ -77,6 +80,7 @@ class SessionFactory:
         sdp_offer: str,
         installation_id: str,
         idempotency_key: str,
+        mission_mode: bool = False,
     ) -> CallAnswer:
         if not self._settings.realtime_enabled:
             raise RealtimeError(
@@ -138,7 +142,7 @@ class SessionFactory:
                     detail="This installation already has an active realtime call.",
                 )
 
-            config = self._model_registry.session_config()
+            config = self._model_registry.session_config(mission_mode)
             await self._repository.create(
                 session_id,
                 installation_hash,
@@ -251,6 +255,8 @@ class SessionFactory:
                     if not isinstance(event, dict):
                         continue
                     self._usage_observer.observe(session_id, event)
+                    if self._sideband_event_observer is not None:
+                        await self._sideband_event_observer.observe(session_id, event)
                     event_type = event.get("type")
                     if event_type == "error":
                         observer = self._usage_observer
@@ -276,6 +282,35 @@ class SessionFactory:
 
     async def get_call(self, session_id: UUID) -> SessionRecord | None:
         return await self._repository.get(session_id)
+
+    async def create_response(
+        self,
+        session_id: UUID,
+        instructions: str,
+        metadata: dict[str, str],
+    ) -> None:
+        sideband = self._sidebands.get(session_id)
+        if sideband is None:
+            raise RealtimeError(
+                code="sideband_unavailable",
+                title="Realtime control unavailable",
+                status=503,
+                detail="The realtime control channel is unavailable.",
+                retryable=True,
+            )
+        await sideband.send(
+            json.dumps(
+                {
+                    "type": "response.create",
+                    "response": {
+                        "instructions": instructions,
+                        "metadata": metadata,
+                    },
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+        )
 
     async def delete_call(self, session_id: UUID, reason: str) -> None:
         task = self._tasks.pop(session_id, None)

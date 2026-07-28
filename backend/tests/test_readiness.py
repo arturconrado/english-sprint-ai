@@ -1,6 +1,8 @@
+import base64
 from collections.abc import Awaitable, Callable
 
 from httpx import ASGITransport, AsyncClient
+from pydantic import SecretStr
 from pytest import MonkeyPatch
 
 from english_sprint_api import main
@@ -64,3 +66,24 @@ async def test_realtime_configuration_is_required_only_when_enabled() -> None:
 
     assert disabled == [{"name": "configuration", "status": "ok"}]
     assert enabled_without_secrets.realtime_configuration_valid is False
+
+
+def test_pedagogy_requires_provider_and_256_bit_content_key() -> None:
+    encoded_key = base64.urlsafe_b64encode(bytes(range(32))).decode().rstrip("=")
+    incomplete = Settings(
+        app_env="test",
+        otel_enabled=False,
+        pedagogy_enabled=True,
+        installation_hash_secret=SecretStr("installation-secret"),
+    )
+    complete = Settings(
+        app_env="test",
+        otel_enabled=False,
+        pedagogy_enabled=True,
+        installation_hash_secret=SecretStr("installation-secret"),
+        openai_api_key=SecretStr("provider-secret"),
+        content_encryption_key=SecretStr(encoded_key),
+    )
+
+    assert incomplete.pedagogy_configuration_valid is False
+    assert complete.pedagogy_configuration_valid is True

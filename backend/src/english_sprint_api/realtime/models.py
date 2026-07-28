@@ -13,6 +13,8 @@ class SessionConfig:
     vad_threshold: float
     vad_prefix_padding_ms: int
     vad_silence_duration_ms: int
+    create_response: bool = True
+    transcription_model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,8 +70,16 @@ class RealtimeProvider(Protocol):
 
 
 class ModelRegistry(Protocol):
-    def session_config(self) -> SessionConfig: ...
+    def session_config(self, mission_mode: bool = False) -> SessionConfig: ...
 
 
 class UsageObserver(Protocol):
     def observe(self, session_id: UUID, event: dict[str, object]) -> None: ...
+
+
+class SidebandEventObserver(Protocol):
+    async def observe(
+        self,
+        session_id: UUID,
+        event: dict[str, object],
+    ) -> None: ...

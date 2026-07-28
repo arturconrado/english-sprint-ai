@@ -32,6 +32,9 @@ enum class LocalVoiceCommand {
     Pause,
     Resume,
     Finish,
+    RepeatPrompt,
+    NeedMoreTime,
+    RequestHelp,
 }
 
 sealed interface VoiceSessionEvent {
@@ -156,6 +159,12 @@ object LocalVoiceCommandParser {
         "continuar" to LocalVoiceCommand.Resume,
         "finish" to LocalVoiceCommand.Finish,
         "encerrar" to LocalVoiceCommand.Finish,
+        "repeat question" to LocalVoiceCommand.RepeatPrompt,
+        "repetir pergunta" to LocalVoiceCommand.RepeatPrompt,
+        "more time" to LocalVoiceCommand.NeedMoreTime,
+        "mais tempo" to LocalVoiceCommand.NeedMoreTime,
+        "help me" to LocalVoiceCommand.RequestHelp,
+        "me ajude" to LocalVoiceCommand.RequestHelp,
     )
 
     fun parse(transcript: String, confidence: Double): LocalVoiceCommand? {

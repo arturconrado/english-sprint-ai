@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MANIFEST="${PROJECT_ROOT}/contracts/pedagogy/mission-state-machine.json"
+PYTHON_OUTPUT="${PROJECT_ROOT}/backend/src/english_sprint_api/pedagogy/generated_state.py"
+KOTLIN_OUTPUT="${PROJECT_ROOT}/shared/src/commonMain/kotlin/com/arturconrado/englishsprint/pedagogy/generated/MissionState.kt"
+
+mkdir -p "$(dirname "${PYTHON_OUTPUT}")" "$(dirname "${KOTLIN_OUTPUT}")"
+
+python3 - "${MANIFEST}" "${PYTHON_OUTPUT}" "${KOTLIN_OUTPUT}" <<'PY'
+from __future__ import annotations
+
+import json
+import pathlib
+import sys
+
+manifest_path, python_path, kotlin_path = map(pathlib.Path, sys.argv[1:])
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+states: list[str] = manifest["states"]
+events: list[str] = manifest["events"]
+terminal_states: list[str] = manifest["terminal_states"]
+transitions: list[list[str]] = manifest["transitions"]
+
+python_lines = [
+    '"""Generated from contracts/pedagogy/mission-state-machine.json. Do not edit."""',
+    "",
+    "from enum import StrEnum",
+    "",
+    "",
+    "class MissionState(StrEnum):",
+]
+python_lines.extend(f'    {value} = "{value}"' for value in states)
+python_lines.extend(["", "", "class MissionEvent(StrEnum):"])
+python_lines.extend(f'    {value} = "{value}"' for value in events)
+python_lines.extend(
+    [
+        "",
+        "",
+        "TERMINAL_STATES = frozenset({",
+        *[f"    MissionState.{value}," for value in terminal_states],
+        "})",
+        "",
+        "TRANSITIONS = {",
+        *[
+            (
+                f"    (MissionState.{source}, MissionEvent.{event}): "
+                f"MissionState.{target},"
+            )
+            for source, event, target in transitions
+        ],
+        "}",
+        "",
+    ]
+)
+python_path.write_text("\n".join(python_lines), encoding="utf-8")
+
+kotlin_lines = [
+    "// Generated from contracts/pedagogy/mission-state-machine.json. Do not edit.",
+    "package com.arturconrado.englishsprint.pedagogy.generated",
+    "",
+    "enum class MissionState {",
+    *[f"    {value}," for value in states],
+    "}",
+    "",
+    "enum class MissionEvent {",
+    *[f"    {value}," for value in events],
+    "}",
+    "",
+    "data class MissionTransitionKey(",
+    "    val state: MissionState,",
+    "    val event: MissionEvent,",
+    ")",
+    "",
+    "val missionTerminalStates: Set<MissionState> = setOf(",
+    *[f"    MissionState.{value}," for value in terminal_states],
+    ")",
+    "",
+    "val missionTransitions: Map<MissionTransitionKey, MissionState> = mapOf(",
+    *[
+        (
+            f"    MissionTransitionKey(MissionState.{source}, MissionEvent.{event}) "
+            f"to MissionState.{target},"
+        )
+        for source, event, target in transitions
+    ],
+    ")",
+    "",
+]
+kotlin_path.write_text("\n".join(kotlin_lines), encoding="utf-8")
+PY
+
+uv run --project "${PROJECT_ROOT}/backend" ruff format "${PYTHON_OUTPUT}"

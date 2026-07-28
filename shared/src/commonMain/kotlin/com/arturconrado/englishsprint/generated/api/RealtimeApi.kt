@@ -62,10 +62,12 @@ open class RealtimeApi : ApiClient {
      * @param xInstallationId Opaque installation identifier. It is HMAC-hashed before persistence.
      * @param idempotencyKey
      * @param body
+     * @param xMissionSessionId Mission session to link. Authorization is required when present. (optional)
+     * @param authorization Mission bearer required together with X-Mission-Session-Id. (optional)
      * @return kotlin.String
      */
     @Suppress("UNCHECKED_CAST")
-    open suspend fun createRealtimeCall(xInstallationId: kotlin.String, idempotencyKey: kotlin.String, body: kotlin.String): HttpResponse<kotlin.String> {
+    open suspend fun createRealtimeCall(xInstallationId: kotlin.String, idempotencyKey: kotlin.String, body: kotlin.String, xMissionSessionId: kotlin.String? = null, authorization: kotlin.String? = null): HttpResponse<kotlin.String> {
 
         val localVariableAuthNames = listOf<String>()
 
@@ -75,6 +77,8 @@ open class RealtimeApi : ApiClient {
         val localVariableHeaders = mutableMapOf<String, String>()
         xInstallationId?.apply { localVariableHeaders["X-Installation-Id"] = this.toString() }
         idempotencyKey?.apply { localVariableHeaders["Idempotency-Key"] = this.toString() }
+        xMissionSessionId?.apply { localVariableHeaders["X-Mission-Session-Id"] = this.toString() }
+        authorization?.apply { localVariableHeaders["Authorization"] = this.toString() }
 
         val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.POST,

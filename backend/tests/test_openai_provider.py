@@ -5,7 +5,7 @@ from pytest import MonkeyPatch
 
 from english_sprint_api.config import Settings
 from english_sprint_api.realtime.models import SessionConfig
-from english_sprint_api.realtime.provider import OpenAIRealtimeProvider
+from english_sprint_api.realtime.provider import DefaultModelRegistry, OpenAIRealtimeProvider
 
 
 class FakeAsyncClient:
@@ -79,6 +79,23 @@ async def test_provider_retries_transient_creation_and_keeps_key_server_side(
     session = calls[0]["files"]["session"][1]
     assert '"tools": []' in session
     assert '"tool_choice": "none"' in session
+
+
+def test_mission_session_disables_automatic_response_and_enables_transcription() -> None:
+    settings = Settings(otel_enabled=False)
+    registry = DefaultModelRegistry(settings)
+    provider = OpenAIRealtimeProvider(settings)
+
+    config = registry.session_config(mission_mode=True)
+    payload = provider._session_payload(config)
+
+    assert config.create_response is False
+    assert config.transcription_model == "gpt-4o-mini-transcribe-2025-12-15"
+    audio = payload["audio"]
+    assert isinstance(audio, dict)
+    input_audio = audio["input"]
+    assert input_audio["turn_detection"]["create_response"] is False
+    assert input_audio["transcription"]["model"] == config.transcription_model
 
 
 async def test_sideband_is_configured_before_being_returned(

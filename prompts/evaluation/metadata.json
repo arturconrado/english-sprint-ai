@@ -1,0 +1,7 @@
+{
+  "id": "attempt-evaluation",
+  "version": "1.0",
+  "language": "en",
+  "schema": "evaluation/1.0",
+  "template": "template.txt"
+}

@@ -22,7 +22,9 @@ class FakeRealtimeService:
         sdp_offer: str,
         installation_id: str,
         idempotency_key: str,
+        mission_mode: bool = False,
     ) -> CallAnswer:
+        assert mission_mode is False
         assert sdp_offer == SDP_OFFER
         assert installation_id == INSTALLATION_ID
         assert idempotency_key == IDEMPOTENCY_KEY

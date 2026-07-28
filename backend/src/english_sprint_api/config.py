@@ -1,3 +1,5 @@
+import base64
+import binascii
 from functools import lru_cache
 from typing import Literal
 
@@ -26,6 +28,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_realtime_model: str = "gpt-realtime-2.1-mini"
     openai_realtime_voice: str = "marin"
+    openai_transcription_model: str = "gpt-4o-mini-transcribe-2025-12-15"
     installation_hash_secret: SecretStr | None = None
     realtime_create_timeout_seconds: float = Field(default=15.0, gt=0, le=30)
     realtime_sideband_timeout_seconds: float = Field(default=10.0, gt=0, le=30)
@@ -36,6 +39,17 @@ class Settings(BaseSettings):
     realtime_vad_threshold: float = Field(default=0.55, ge=0, le=1)
     realtime_vad_prefix_padding_ms: int = Field(default=300, ge=0, le=2000)
     realtime_vad_silence_duration_ms: int = Field(default=600, ge=100, le=5000)
+    pedagogy_enabled: bool = False
+    internal_api_token: SecretStr | None = None
+    pedagogical_evaluation_model: str = "gpt-5.4-mini-2026-03-17"
+    mission_summary_model: str = "gpt-5.4-mini-2026-03-17"
+    pedagogy_session_token_days: int = Field(default=35, ge=1, le=35)
+    pedagogy_idempotency_ttl_seconds: int = Field(default=300, ge=60, le=900)
+    pedagogy_content_ttl_seconds: int = Field(default=3600, ge=60, le=3600)
+    content_retention_enabled: bool = False
+    content_retention_days: int = Field(default=30, ge=1, le=30)
+    content_encryption_key: SecretStr | None = None
+    content_encryption_key_version: str = "v1"
 
     @property
     def realtime_configuration_valid(self) -> bool:
@@ -47,6 +61,24 @@ class Settings(BaseSettings):
             and self.openai_realtime_model
             and self.openai_realtime_voice
         )
+
+    @property
+    def pedagogy_configuration_valid(self) -> bool:
+        if not self.pedagogy_enabled:
+            return True
+        if (
+            not self.installation_hash_secret
+            or not self.pedagogical_evaluation_model
+            or not self.openai_api_key
+            or not self.content_encryption_key
+        ):
+            return False
+        try:
+            encoded = self.content_encryption_key.get_secret_value()
+            key = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        except (ValueError, binascii.Error):
+            return False
+        return len(key) == 32
 
 
 @lru_cache

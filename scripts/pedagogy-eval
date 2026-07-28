@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODE="${1:-offline}"
+REPETITIONS="${2:-3}"
+
+cd "${PROJECT_ROOT}/backend"
+PYTHONPATH=src uv run python -m english_sprint_api.pedagogy.eval_harness \
+  --mode "${MODE}" \
+  --repetitions "${REPETITIONS}"

@@ -9,6 +9,13 @@ from fastapi.responses import JSONResponse, Response
 
 from english_sprint_api.config import Settings, get_settings
 from english_sprint_api.observability import configure_observability
+from english_sprint_api.pedagogy.content_store import TransientTranscriptStore
+from english_sprint_api.pedagogy.missions import MissionCatalog
+from english_sprint_api.pedagogy.queue import ConversationQueue, EvaluationQueue
+from english_sprint_api.pedagogy.repository import MissionRepository
+from english_sprint_api.pedagogy.routes import router as pedagogy_router
+from english_sprint_api.pedagogy.service import MissionService
+from english_sprint_api.pedagogy.store import PedagogyStore
 from english_sprint_api.readiness import readiness_checks
 from english_sprint_api.realtime.errors import RealtimeError
 from english_sprint_api.realtime.provider import DefaultModelRegistry, OpenAIRealtimeProvider
@@ -35,7 +42,10 @@ TERMINATION_REASONS = {
 settings = get_settings()
 
 
-def create_realtime_service(configuration: Settings) -> SessionFactory:
+def create_realtime_service(
+    configuration: Settings,
+    mission_service: MissionService | None = None,
+) -> SessionFactory:
     return SessionFactory(
         settings=configuration,
         provider=OpenAIRealtimeProvider(configuration),
@@ -45,6 +55,32 @@ def create_realtime_service(configuration: Settings) -> SessionFactory:
             configuration.redis_url,
             configuration.realtime_redis_ttl_seconds,
         ),
+        sideband_event_observer=mission_service,
+    )
+
+
+def create_mission_service(configuration: Settings) -> MissionService:
+    transcripts = (
+        TransientTranscriptStore(
+            configuration.redis_url,
+            configuration.content_encryption_key.get_secret_value(),
+            configuration.content_encryption_key_version,
+            configuration.pedagogy_content_ttl_seconds,
+        )
+        if configuration.content_encryption_key is not None
+        else None
+    )
+    return MissionService(
+        settings=configuration,
+        catalog=MissionCatalog(),
+        repository=MissionRepository(configuration.database_url),
+        queue=EvaluationQueue(configuration.redis_url),
+        conversation_queue=ConversationQueue(configuration.redis_url),
+        store=PedagogyStore(
+            configuration.redis_url,
+            configuration.pedagogy_idempotency_ttl_seconds,
+        ),
+        transcripts=transcripts,
     )
 
 
@@ -52,7 +88,9 @@ def create_realtime_service(configuration: Settings) -> SessionFactory:
 async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     if settings.realtime_enabled:
         await application.state.realtime_service.reconcile_orphans()
+    await application.state.mission_service.startup()
     yield
+    await application.state.mission_service.shutdown()
     await application.state.realtime_service.shutdown()
 
 
@@ -64,7 +102,14 @@ app = FastAPI(
     openapi_url=None,
     lifespan=lifespan,
 )
-app.state.realtime_service = create_realtime_service(settings)
+app.state.mission_service = create_mission_service(settings)
+app.state.realtime_service = create_realtime_service(
+    settings,
+    app.state.mission_service,
+)
+app.state.mission_service.bind_realtime_control(app.state.realtime_service)
+app.state.settings = settings
+app.include_router(pedagogy_router)
 
 
 def problem(error: RealtimeError) -> JSONResponse:
@@ -92,7 +137,7 @@ async def validation_error_handler(
     request: Request,
     _: RequestValidationError,
 ) -> JSONResponse:
-    if request.url.path.startswith("/v1/realtime/calls"):
+    if request.url.path.startswith(("/v1/realtime/calls", "/v1/mission", "/internal/")):
         return problem(
             RealtimeError(
                 code="invalid_request",
@@ -174,8 +219,35 @@ async def create_realtime_call(
     request: Request,
     x_installation_id: str = Header(alias="X-Installation-Id"),
     idempotency_key: str = Header(alias="Idempotency-Key"),
+    x_mission_session_id: str | None = Header(
+        default=None,
+        alias="X-Mission-Session-Id",
+    ),
+    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> Response:
     validate_headers(x_installation_id, idempotency_key)
+    mission_session_id: UUID | None = None
+    if x_mission_session_id is not None or authorization is not None:
+        if x_mission_session_id is None or authorization is None:
+            raise RealtimeError(
+                code="incomplete_mission_link",
+                title="Invalid mission link",
+                status=400,
+                detail="Mission session and bearer headers must be provided together.",
+            )
+        scheme, separator, token = authorization.partition(" ")
+        if not separator or scheme.casefold() != "bearer" or not token:
+            raise RealtimeError(
+                code="invalid_mission_token",
+                title="Unauthorized",
+                status=401,
+                detail="A valid mission-session bearer token is required.",
+            )
+        mission_session_id = parse_session_id(x_mission_session_id)
+        await request.app.state.mission_service.authenticate(
+            token,
+            mission_session_id,
+        )
     content_type = request.headers.get("content-type", "").split(";", maxsplit=1)[0]
     if content_type != "application/sdp":
         raise RealtimeError(
@@ -223,7 +295,29 @@ async def create_realtime_call(
         sdp_offer,
         x_installation_id,
         idempotency_key,
+        mission_mode=mission_session_id is not None,
     )
+    if mission_session_id is not None:
+        try:
+            opening = await request.app.state.mission_service.open_voice_session(
+                mission_session_id,
+                answer.session_id,
+            )
+            await request.app.state.realtime_service.create_response(
+                answer.session_id,
+                opening.instruction,
+                {
+                    "mission_session_id": str(mission_session_id),
+                    "state": opening.state.state.value,
+                    "state_version": str(opening.state.state_version),
+                },
+            )
+        except Exception:
+            await request.app.state.realtime_service.delete_call(
+                answer.session_id,
+                "provider_error",
+            )
+            raise
     location = f"/v1/realtime/calls/{answer.session_id}"
     return Response(
         content=answer.sdp_answer,

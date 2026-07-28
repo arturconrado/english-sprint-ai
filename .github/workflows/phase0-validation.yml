@@ -118,6 +118,9 @@ jobs:
         working-directory: backend
         run: uv run pytest
 
+      - name: Run offline pedagogical evaluation harness
+        run: ./scripts/pedagogy-eval offline
+
       - name: Exercise migrations and live readiness
         run: ./scripts/ci-backend-smoke
 

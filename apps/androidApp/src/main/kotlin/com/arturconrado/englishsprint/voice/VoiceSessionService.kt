@@ -17,6 +17,8 @@ import android.os.PowerManager
 import com.arturconrado.englishsprint.BuildConfig
 import com.arturconrado.englishsprint.MainActivity
 import com.arturconrado.englishsprint.api.KtorRealtimeSessionApi
+import com.arturconrado.englishsprint.api.KtorMissionApi
+import com.arturconrado.englishsprint.api.MissionCallAuthorization
 import com.arturconrado.englishsprint.domain.VoiceSessionCommand
 import com.arturconrado.englishsprint.domain.VoiceSessionState
 import com.arturconrado.englishsprint.networking.createHttpClient
@@ -70,7 +72,10 @@ class VoiceSessionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START -> startSession()
+            ACTION_START -> startSession(
+                intent.getStringExtra(EXTRA_MISSION_SESSION_ID),
+                intent.getStringExtra(EXTRA_MISSION_SESSION_TOKEN),
+            )
             ACTION_PAUSE -> dispatch(VoiceSessionCommand.Pause)
             ACTION_RESUME -> dispatch(VoiceSessionCommand.Resume)
             ACTION_FINISH -> finishSession(
@@ -80,7 +85,10 @@ class VoiceSessionService : Service() {
         return START_NOT_STICKY
     }
 
-    private fun startSession() {
+    private fun startSession(
+        missionSessionId: String?,
+        missionSessionToken: String?,
+    ) {
         startForeground(NOTIFICATION_ID, notification("CONNECTING", null))
         if (!requiredPermissionsGranted()) {
             updateSnapshot(
@@ -128,6 +136,17 @@ class VoiceSessionService : Service() {
                 ),
                 rtcFactory = AndroidWebRtcSessionFactory(this@VoiceSessionService),
                 installationId = installationId,
+                missionApi = KtorMissionApi(
+                    baseUrl = BuildConfig.REALTIME_API_BASE_URL.trimEnd('/'),
+                    client = httpClient,
+                ),
+                missionAuthorization = if (
+                    missionSessionId != null && missionSessionToken != null
+                ) {
+                    MissionCallAuthorization(missionSessionId, missionSessionToken)
+                } else {
+                    null
+                },
                 onSnapshot = ::updateSnapshot,
             )
             engine = newEngine
@@ -299,6 +318,8 @@ class VoiceSessionService : Service() {
         const val ACTION_RESUME = "com.arturconrado.englishsprint.voice.RESUME"
         const val ACTION_FINISH = "com.arturconrado.englishsprint.voice.FINISH"
         const val EXTRA_TERMINATION_REASON = "termination_reason"
+        const val EXTRA_MISSION_SESSION_ID = "mission_session_id"
+        const val EXTRA_MISSION_SESSION_TOKEN = "mission_session_token"
         private const val NOTIFICATION_CHANNEL_ID = "voice_session"
         private const val NOTIFICATION_ID = 1001
         private const val INSTALLATION_ID_KEY = "anonymous_installation_id"

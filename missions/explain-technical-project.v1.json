@@ -1,0 +1,27 @@
+{
+  "id": "d208a159-b8f7-4a8b-b566-cda29e8896e5",
+  "slug": "explain-technical-project",
+  "version": 1,
+  "title": "Explain a Technical Project",
+  "description": "Explain a complex project, your decisions and its result.",
+  "scenario": "You are speaking with a senior technical interviewer.",
+  "initial_question": "Tell me about a complex software or AI project you worked on.",
+  "transfer_question": "How would you explain the same project to a non-technical client?",
+  "target_skills": [
+    "professional.project_context",
+    "professional.problem",
+    "professional.individual_role",
+    "professional.technical_decisions",
+    "professional.results",
+    "professional.tradeoffs",
+    "vocabulary.technical"
+  ],
+  "expected_duration_minutes": 12,
+  "difficulty": "intermediate",
+  "language_policy": "Tutor speaks concise English and accepts English learner responses.",
+  "correction_policy": "Select one primary and at most one distinct secondary correction.",
+  "maximum_attempts": 3,
+  "maximum_corrections": 2,
+  "completion_rules": "First attempt, retry, transfer, evidence, summary and review.",
+  "prompt_context": "Preserve valid technical terminology and focus on communication impact."
+}

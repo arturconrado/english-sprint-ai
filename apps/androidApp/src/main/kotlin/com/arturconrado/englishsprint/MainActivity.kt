@@ -15,10 +15,16 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.arturconrado.englishsprint.api.KtorMissionApi
+import com.arturconrado.englishsprint.domain.Mission
 import com.arturconrado.englishsprint.domain.VoiceSessionCommand
 import com.arturconrado.englishsprint.domain.VoiceSessionState
+import com.arturconrado.englishsprint.mission.MissionSessionTokenStore
+import com.arturconrado.englishsprint.mission.StoredMissionSession
+import com.arturconrado.englishsprint.networking.createHttpClient
 import com.arturconrado.englishsprint.voice.VoiceSessionService
 import com.arturconrado.englishsprint.voice.VoiceSessionSnapshot
+import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,14 +40,33 @@ class MainActivity : ComponentActivity() {
     private var bound = false
     private var snapshot by mutableStateOf(VoiceSessionSnapshot())
     private var requestingPermission by mutableStateOf(false)
+    private var missionsLoading by mutableStateOf(true)
+    private var missions by mutableStateOf<List<Mission>>(emptyList())
+    private var selectedMissionId by mutableStateOf<String?>(null)
+    private var processingConsent by mutableStateOf(false)
+    private var retentionConsent by mutableStateOf(false)
+    private var missionSessionState by mutableStateOf<String?>(null)
+    private var pendingMissionStart = false
+    private val httpClient by lazy { createHttpClient() }
+    private val missionApi by lazy {
+        KtorMissionApi(
+            BuildConfig.REALTIME_API_BASE_URL.trimEnd('/'),
+            httpClient,
+        )
+    }
+    private val tokenStore by lazy { MissionSessionTokenStore(this) }
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { results ->
         requestingPermission = false
         if (requiredPermissions().all { results[it] == true || isGranted(it) }) {
-            startVoiceService()
+            if (pendingMissionStart) {
+                pendingMissionStart = false
+                createMissionAndStart()
+            }
         } else {
+            pendingMissionStart = false
             snapshot = VoiceSessionSnapshot(
                 state = VoiceSessionState.Error("permission_denied", false),
                 errorCode = "permission_denied",
@@ -55,7 +80,10 @@ class MainActivity : ComponentActivity() {
             bound = serviceBinder != null
             bindingJob?.cancel()
             bindingJob = activityScope.launch {
-                serviceBinder?.snapshots?.collectLatest { snapshot = it }
+                serviceBinder?.snapshots?.collectLatest {
+                    snapshot = it
+                    it.missionState?.let { state -> missionSessionState = state }
+                }
             }
         }
 
@@ -79,10 +107,33 @@ class MainActivity : ComponentActivity() {
                     routeName = snapshot.routeName,
                     errorCode = snapshot.errorCode,
                     voiceAvailable = true,
+                    missions = missions.map {
+                        MissionCardUiModel(
+                            id = it.id,
+                            title = it.title,
+                            objective = it.description,
+                            durationMinutes = it.expectedDurationMinutes,
+                            difficulty = it.difficulty,
+                        )
+                    },
+                    selectedMissionId = selectedMissionId,
+                    missionsLoading = missionsLoading,
+                    processingConsent = processingConsent,
+                    retentionConsent = retentionConsent,
+                    missionSessionState = missionSessionState,
                 ),
                 onCommand = ::onCommand,
+                onMissionSelected = {
+                    selectedMissionId = it
+                    processingConsent = false
+                    retentionConsent = false
+                },
+                onProcessingConsentChanged = { processingConsent = it },
+                onRetentionConsentChanged = { retentionConsent = it },
+                onStartMission = ::requestPermissionsAndStart,
             )
         }
+        restoreSessionOrLoadCatalog()
     }
 
     override fun onStart() {
@@ -102,6 +153,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         activityScope.cancel()
+        httpClient.close()
         super.onDestroy()
     }
 
@@ -113,21 +165,92 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestPermissionsAndStart() {
+        if (selectedMissionId == null || !processingConsent) return
         val missing = requiredPermissions().filterNot(::isGranted)
         if (missing.isEmpty()) {
-            startVoiceService()
+            createMissionAndStart()
         } else {
+            pendingMissionStart = true
             requestingPermission = true
             permissionLauncher.launch(missing.toTypedArray())
         }
     }
 
-    private fun startVoiceService() {
+    private fun createMissionAndStart() {
+        val missionId = selectedMissionId ?: return
+        missionsLoading = true
+        activityScope.launch {
+            runCatching {
+                missionApi.createSession(
+                    missionId = missionId,
+                    installationId = installationId(),
+                    idempotencyKey = UUID.randomUUID().toString(),
+                    processingConsent = processingConsent,
+                    contentRetentionConsent = retentionConsent,
+                )
+            }.onSuccess { created ->
+                tokenStore.save(
+                    StoredMissionSession(
+                        created.session.sessionId,
+                        created.bearerToken,
+                    ),
+                )
+                missionSessionState = created.session.state
+                startVoiceService(
+                    created.session.sessionId,
+                    created.bearerToken,
+                )
+            }.onFailure {
+                snapshot = VoiceSessionSnapshot(
+                    state = VoiceSessionState.Error("mission_creation_failed", true),
+                    errorCode = "mission_creation_failed",
+                )
+            }
+            missionsLoading = false
+        }
+    }
+
+    private fun startVoiceService(sessionId: String, token: String) {
         startForegroundService(
             Intent(this, VoiceSessionService::class.java)
-                .setAction(VoiceSessionService.ACTION_START),
+                .setAction(VoiceSessionService.ACTION_START)
+                .putExtra(VoiceSessionService.EXTRA_MISSION_SESSION_ID, sessionId)
+                .putExtra(VoiceSessionService.EXTRA_MISSION_SESSION_TOKEN, token),
         )
         bindVoiceService(createIfMissing = true)
+    }
+
+    private fun restoreSessionOrLoadCatalog() {
+        activityScope.launch {
+            tokenStore.load()?.let { stored ->
+                runCatching {
+                    missionApi.getSession(stored.sessionId, stored.bearerToken)
+                }.onSuccess { session ->
+                    if (
+                        session.state in setOf(
+                            "MISSION_COMPLETED",
+                            "MISSION_CANCELLED",
+                            "MISSION_FAILED",
+                        )
+                    ) {
+                        tokenStore.clear()
+                    } else {
+                        missionSessionState = session.state
+                    }
+                }.onFailure {
+                    tokenStore.clear()
+                }
+            }
+            runCatching { missionApi.listMissions() }
+                .onSuccess { missions = it }
+                .onFailure {
+                    snapshot = VoiceSessionSnapshot(
+                        state = VoiceSessionState.Error("mission_catalog_unavailable", true),
+                        errorCode = "mission_catalog_unavailable",
+                    )
+                }
+            missionsLoading = false
+        }
     }
 
     private fun sendServiceCommand(command: VoiceSessionCommand) {
@@ -149,6 +272,14 @@ class MainActivity : ComponentActivity() {
             connection,
             if (createIfMissing) Context.BIND_AUTO_CREATE else 0,
         )
+    }
+
+    private fun installationId(): String {
+        val preferences = getSharedPreferences("voice_installation", MODE_PRIVATE)
+        return preferences.getString("anonymous_installation_id", null)
+            ?: UUID.randomUUID().toString().also {
+                preferences.edit().putString("anonymous_installation_id", it).apply()
+            }
     }
 
     private fun requiredPermissions(): List<String> = buildList {

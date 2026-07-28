@@ -11,6 +11,12 @@ tags:
     description: Process health and dependency readiness.
   - name: Realtime
     description: Realtime voice call signaling and lifecycle.
+  - name: Missions
+    description: Deterministic SPEAK-loop mission lifecycle.
+  - name: Pedagogy
+    description: Evidence, skills, summaries, and reviews.
+  - name: Internal
+    description: Private worker commands unavailable to Android clients.
 paths:
   /healthz:
     get:
@@ -56,6 +62,8 @@ paths:
       parameters:
         - $ref: "#/components/parameters/InstallationId"
         - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/MissionSessionHeader"
+        - $ref: "#/components/parameters/OptionalMissionAuthorization"
       requestBody:
         required: true
         content:
@@ -89,6 +97,8 @@ paths:
         "400":
           $ref: "#/components/responses/Problem"
         "409":
+          $ref: "#/components/responses/Problem"
+        "401":
           $ref: "#/components/responses/Problem"
         "413":
           $ref: "#/components/responses/Problem"
@@ -149,7 +159,342 @@ paths:
           $ref: "#/components/responses/Problem"
         "503":
           $ref: "#/components/responses/Problem"
+  /v1/missions:
+    get:
+      tags: [Missions]
+      operationId: listMissions
+      summary: List immutable mission versions available to learners
+      description: Returns versioned mission metadata without requiring authentication.
+      responses:
+        "200":
+          description: Available missions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Mission"
+  /v1/missions/{mission_id}:
+    parameters:
+      - $ref: "#/components/parameters/MissionId"
+    get:
+      tags: [Missions]
+      operationId: getMission
+      summary: Read one mission
+      description: Returns the immutable public definition of one mission.
+      responses:
+        "200":
+          description: Mission definition.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mission"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions:
+    post:
+      tags: [Missions]
+      operationId: createMissionSession
+      summary: Create an anonymous mission session
+      description: Creates a consented session and returns its bearer token once.
+      parameters:
+        - $ref: "#/components/parameters/InstallationId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMissionSessionRequest"
+      responses:
+        "201":
+          description: Session created. The bearer token is returned only here.
+          headers:
+            X-Mission-Session-Token:
+              required: true
+              description: Opaque 256-bit bearer scoped to this user and session.
+              schema:
+                type: string
+                minLength: 43
+                maxLength: 64
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+    get:
+      tags: [Missions]
+      operationId: getMissionSession
+      summary: Recover the canonical mission state
+      description: Returns the backend-authoritative state after validating ownership.
+      security:
+        - missionBearer: []
+      responses:
+        "200":
+          description: Canonical mission state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}/attempts:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Missions]
+      operationId: createMissionAttempt
+      summary: Record one completed attempt and queue its evaluation
+      description: Records attempt metadata without accepting audio or transcript content.
+      security:
+        - missionBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAttemptRequest"
+      responses:
+        "202":
+          description: Attempt accepted for asynchronous evaluation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttemptReceipt"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}/commands:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Missions]
+      operationId: sendMissionCommand
+      summary: Send a typed command through the shared command bus
+      description: Applies one idempotent command with optimistic state versioning.
+      security:
+        - missionBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MissionCommandRequest"
+      responses:
+        "200":
+          description: Updated canonical state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Missions]
+      operationId: cancelMissionSession
+      summary: Idempotently cancel and clean up a mission
+      description: Cancels a session without creating further pedagogical evidence.
+      security:
+        - missionBearer: []
+      responses:
+        "200":
+          description: Cancelled canonical state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Missions]
+      operationId: completeMissionSession
+      summary: Complete a summarized mission and schedule its review
+      description: Finalizes a summarized mission using optimistic state versioning.
+      security:
+        - missionBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StateVersionRequest"
+      responses:
+        "200":
+          description: Completed canonical state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}/summary:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+    get:
+      tags: [Pedagogy]
+      operationId: getMissionSummary
+      summary: Read sanitized evidence and the next review
+      description: Returns only evidence permitted by the session retention policy.
+      security:
+        - missionBearer: []
+      responses:
+        "200":
+          description: Mission summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSummary"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/skills:
+    get:
+      tags: [Pedagogy]
+      operationId: listSkills
+      summary: List skill states for the mission-session user
+      description: Returns monotonic skill states backed by append-only evidence.
+      security:
+        - missionBearer: []
+      responses:
+        "200":
+          description: Monotonic skill states.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserSkillState"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /v1/reviews/due:
+    get:
+      tags: [Pedagogy]
+      operationId: listDueReviews
+      summary: List scheduled reviews due for the mission-session user
+      description: Returns reviews due now without exposing retained attempt content.
+      security:
+        - missionBearer: []
+      responses:
+        "200":
+          description: Due review items.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReviewItem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /internal/attempts/{attempt_id}/evaluate:
+    parameters:
+      - name: attempt_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Internal]
+      operationId: evaluateAttemptInternal
+      summary: Queue one typed attempt evaluation
+      description: Queues an ID-only evaluation message for the private worker.
+      security:
+        - internalBearer: []
+      responses:
+        "202":
+          description: Evaluation queued.
+        "401":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /internal/mission-sessions/{session_id}/advance:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+    post:
+      tags: [Internal]
+      operationId: advanceMissionInternal
+      summary: Apply one typed domain event
+      description: Applies a deterministic state event from an authorized service.
+      security:
+        - internalBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalAdvanceRequest"
+      responses:
+        "200":
+          description: Updated canonical state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /internal/mission-sessions/{session_id}/summarize:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+    post:
+      tags: [Internal]
+      operationId: summarizeMissionInternal
+      summary: Compose a bounded mission summary
+      description: Queues deterministic or bounded-model summary composition.
+      security:
+        - internalBearer: []
+      responses:
+        "202":
+          description: Summary queued.
+        "401":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
 components:
+  securitySchemes:
+    missionBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-session-token
+    internalBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: internal-service-token
   parameters:
     InstallationId:
       name: X-Installation-Id
@@ -175,6 +520,36 @@ components:
       schema:
         type: string
         format: uuid
+    MissionId:
+      name: mission_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MissionSessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MissionSessionHeader:
+      name: X-Mission-Session-Id
+      in: header
+      required: false
+      description: Mission session to link. Authorization is required when present.
+      schema:
+        type: string
+        format: uuid
+    OptionalMissionAuthorization:
+      name: Authorization
+      in: header
+      required: false
+      description: Mission bearer required together with X-Mission-Session-Id.
+      schema:
+        type: string
+        pattern: "^Bearer .+$"
   responses:
     Problem:
       description: A typed, sanitized API failure.
@@ -328,3 +703,338 @@ components:
         request_id:
           type: string
           format: uuid
+    Mission:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - slug
+        - version
+        - title
+        - description
+        - scenario
+        - initial_question
+        - transfer_question
+        - target_skills
+        - expected_duration_minutes
+        - difficulty
+        - maximum_attempts
+        - maximum_corrections
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+        description:
+          type: string
+        scenario:
+          type: string
+        initial_question:
+          type: string
+        transfer_question:
+          type: string
+        target_skills:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        expected_duration_minutes:
+          type: integer
+          minimum: 1
+          maximum: 30
+        difficulty:
+          type: string
+        maximum_attempts:
+          type: integer
+          const: 3
+        maximum_corrections:
+          type: integer
+          minimum: 1
+          maximum: 2
+    MissionState:
+      type: string
+      enum:
+        - MISSION_IDLE
+        - MISSION_STARTING
+        - SCENARIO_PRESENTING
+        - FIRST_ATTEMPT_WAITING
+        - FIRST_ATTEMPT_RECEIVED
+        - FIRST_ATTEMPT_EVALUATING
+        - CORRECTION_PREPARING
+        - CORRECTION_PRESENTING
+        - RETRY_WAITING
+        - RETRY_RECEIVED
+        - RETRY_EVALUATING
+        - TRANSFER_PRESENTING
+        - TRANSFER_WAITING
+        - TRANSFER_RECEIVED
+        - TRANSFER_EVALUATING
+        - MISSION_SUMMARIZING
+        - MISSION_COMPLETED
+        - MISSION_CANCELLED
+        - MISSION_FAILED
+    CreateMissionSessionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - mission_id
+        - processing_consent
+        - content_retention_consent
+      properties:
+        mission_id:
+          type: string
+          format: uuid
+        processing_consent:
+          type: boolean
+        content_retention_consent:
+          type: boolean
+          default: false
+    MissionSession:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - mission_id
+        - mission_version
+        - state
+        - state_version
+        - processing_consent
+        - content_retention_consent
+        - created_at
+        - updated_at
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        mission_id:
+          type: string
+          format: uuid
+        mission_version:
+          type: integer
+          minimum: 1
+        state:
+          $ref: "#/components/schemas/MissionState"
+        state_version:
+          type: integer
+          minimum: 0
+        processing_consent:
+          type: boolean
+        content_retention_consent:
+          type: boolean
+        voice_session_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    AttemptKind:
+      type: string
+      enum: [first, retry, transfer]
+    HelpLevel:
+      type: string
+      enum: [NO_HELP, FIRST_WORD, KEYWORDS, SHORT_MODEL, FULL_MODEL]
+    CreateAttemptRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - client_attempt_id
+        - state_version
+        - kind
+        - help_level
+        - started_at
+        - completed_at
+      properties:
+        client_attempt_id:
+          type: string
+          format: uuid
+        state_version:
+          type: integer
+          minimum: 0
+        kind:
+          $ref: "#/components/schemas/AttemptKind"
+        help_level:
+          $ref: "#/components/schemas/HelpLevel"
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        used_time_extension:
+          type: boolean
+          default: false
+    AttemptReceipt:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, state, state_version, evaluation_status]
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+        state:
+          $ref: "#/components/schemas/MissionState"
+        state_version:
+          type: integer
+          minimum: 0
+        evaluation_status:
+          type: string
+          enum: [queued, processing, completed, failed, dead_letter]
+    MissionCommand:
+      type: string
+      enum:
+        - repeat_prompt
+        - need_more_time
+        - request_help
+        - pause
+        - resume
+        - stop_response
+        - cancel
+        - finish
+    MissionCommandRequest:
+      type: object
+      additionalProperties: false
+      required: [command, state_version]
+      properties:
+        command:
+          $ref: "#/components/schemas/MissionCommand"
+        state_version:
+          type: integer
+          minimum: 0
+    StateVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [state_version]
+      properties:
+        state_version:
+          type: integer
+          minimum: 0
+    InternalAdvanceRequest:
+      type: object
+      additionalProperties: false
+      required: [event, state_version]
+      properties:
+        event:
+          type: string
+          enum:
+            - START_REQUESTED
+            - SESSION_STARTED
+            - SCENARIO_PRESENTED
+            - ATTEMPT_COMPLETED
+            - EVALUATION_QUEUED
+            - EVALUATION_SUCCEEDED
+            - EVALUATION_FAILED
+            - CORRECTION_PREPARED
+            - CORRECTION_PRESENTED
+            - TRANSFER_PRESENTED
+            - SUMMARY_COMPLETED
+            - CANCEL_REQUESTED
+            - FAILURE_RECORDED
+        state_version:
+          type: integer
+          minimum: 0
+    SkillState:
+      type: string
+      enum:
+        - UNKNOWN
+        - RECOGNIZED
+        - PRODUCED_WITH_HELP
+        - PRODUCED_SPONTANEOUSLY
+        - TRANSFERRED
+    UserSkillState:
+      type: object
+      additionalProperties: false
+      required: [skill_id, slug, state, updated_at]
+      properties:
+        skill_id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        state:
+          $ref: "#/components/schemas/SkillState"
+        updated_at:
+          type: string
+          format: date-time
+    ReviewItem:
+      type: object
+      additionalProperties: false
+      required: [review_id, mission_id, skill_id, review_type, scheduled_at, status]
+      properties:
+        review_id:
+          type: string
+          format: uuid
+        mission_id:
+          type: string
+          format: uuid
+        skill_id:
+          type: string
+          format: uuid
+        review_type:
+          type: string
+          enum: [targeted_correction, generic_skill]
+        scheduled_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [scheduled, due, completed, cancelled]
+    MissionSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - mission_id
+        - state
+        - attempt_count
+        - content_retained
+        - evidence_available
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        mission_id:
+          type: string
+          format: uuid
+        state:
+          $ref: "#/components/schemas/MissionState"
+        attempt_count:
+          type: integer
+          minimum: 0
+          maximum: 3
+        strength:
+          type:
+            - string
+            - "null"
+        primary_correction:
+          type:
+            - string
+            - "null"
+        skill_state:
+          oneOf:
+            - $ref: "#/components/schemas/SkillState"
+            - type: "null"
+        next_review_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        content_retained:
+          type: boolean
+        evidence_available:
+          type: boolean
