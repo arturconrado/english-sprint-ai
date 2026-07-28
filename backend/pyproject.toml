@@ -27,7 +27,7 @@ dependencies = [
 dev = [
     "datamodel-code-generator==0.66.3",
     "jsonschema>=4.25.1,<5",
-    "mypy>=1.17.1,<2",
+    "mypy>=2.3.0,<3",
     "openapi-spec-validator>=0.7.2,<1",
     "pip-audit>=2.9.0,<3",
     "pytest>=9.0.3,<10",
