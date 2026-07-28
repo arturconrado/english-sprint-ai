@@ -22,6 +22,7 @@ interface RealtimeSessionApi {
         sdpOffer: String,
         installationId: String,
         idempotencyKey: String,
+        missionAuthorization: MissionCallAuthorization? = null,
     ): RealtimeCallAnswer
 
     suspend fun getCall(sessionId: String): VoiceSessionMetadata
@@ -31,6 +32,11 @@ interface RealtimeSessionApi {
         terminationReason: String = "user_finished",
     )
 }
+
+data class MissionCallAuthorization(
+    val sessionId: String,
+    val bearerToken: String,
+)
 
 class RealtimeApiException(
     val statusCode: Int,
@@ -46,11 +52,16 @@ class KtorRealtimeSessionApi(
         sdpOffer: String,
         installationId: String,
         idempotencyKey: String,
+        missionAuthorization: MissionCallAuthorization?,
     ): RealtimeCallAnswer {
         val response = client.post("$baseUrl/v1/realtime/calls") {
             contentType(ContentType.parse("application/sdp"))
             header("X-Installation-Id", installationId)
             header("Idempotency-Key", idempotencyKey)
+            missionAuthorization?.let {
+                header("X-Mission-Session-Id", it.sessionId)
+                header("Authorization", "Bearer ${it.bearerToken}")
+            }
             setBody(sdpOffer)
         }
         ensureSuccess(response.status, response)

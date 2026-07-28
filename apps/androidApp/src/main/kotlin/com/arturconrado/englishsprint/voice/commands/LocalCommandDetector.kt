@@ -59,14 +59,14 @@ class VoskLocalCommandDetector(
         englishRecognizer = Recognizer(
             requireNotNull(englishModel),
             TARGET_SAMPLE_RATE.toFloat(),
-            """["stop","pause","resume","finish","[unk]"]""",
+            """["stop","pause","resume","finish","repeat question","more time","help me","[unk]"]""",
         ).apply {
             setWords(true)
         }
         portugueseRecognizer = Recognizer(
             requireNotNull(portugueseModel),
             TARGET_SAMPLE_RATE.toFloat(),
-            """["parar","pausar","continuar","encerrar","[unk]"]""",
+            """["parar","pausar","continuar","encerrar","repetir pergunta","mais tempo","me ajude","[unk]"]""",
         ).apply {
             setWords(true)
         }
