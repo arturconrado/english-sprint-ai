@@ -30,6 +30,7 @@ class EvaluationQueue:
         self,
         consumer: str,
         handler: Callable[[UUID], Awaitable[None]],
+        failure_handler: Callable[[UUID, bool], Awaitable[None]] | None = None,
     ) -> bool:
         await self.ensure_group()
         messages = await self._redis.xreadgroup(
@@ -50,11 +51,15 @@ class EvaluationQueue:
         except Exception:
             if retry < 1:
                 await self.enqueue(attempt_id, retry=retry + 1)
+                if failure_handler is not None:
+                    await failure_handler(attempt_id, False)
             else:
                 await self._redis.xadd(
                     DEAD_LETTER_STREAM,
                     {"attempt_id": str(attempt_id), "retry": str(retry)},
                 )
+                if failure_handler is not None:
+                    await failure_handler(attempt_id, True)
         finally:
             await self._redis.xack(  # type: ignore[no-untyped-call]
                 STREAM,

@@ -1,0 +1,1 @@
+{"prompts":[{"id":"attempt-evaluation","language":"en","metadata_path":"prompts/evaluation/metadata.json","schema":"evaluation/1.0","sha256":"3038b7c731ea219ee936a8ce1a96af61c66b63e4f22773dd858c8875ee5e0d31","template":"template.txt","template_path":"prompts/evaluation/template.txt","version":"1.0"}],"schema_version":"1.0"}

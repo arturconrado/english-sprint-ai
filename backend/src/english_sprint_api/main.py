@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse, Response
 
 from english_sprint_api.config import Settings, get_settings
 from english_sprint_api.observability import configure_observability
+from english_sprint_api.pedagogy.content_store import TransientTranscriptStore
 from english_sprint_api.pedagogy.missions import MissionCatalog
 from english_sprint_api.pedagogy.queue import EvaluationQueue
 from english_sprint_api.pedagogy.repository import MissionRepository
@@ -41,7 +42,10 @@ TERMINATION_REASONS = {
 settings = get_settings()
 
 
-def create_realtime_service(configuration: Settings) -> SessionFactory:
+def create_realtime_service(
+    configuration: Settings,
+    mission_service: MissionService | None = None,
+) -> SessionFactory:
     return SessionFactory(
         settings=configuration,
         provider=OpenAIRealtimeProvider(configuration),
@@ -51,10 +55,21 @@ def create_realtime_service(configuration: Settings) -> SessionFactory:
             configuration.redis_url,
             configuration.realtime_redis_ttl_seconds,
         ),
+        sideband_event_observer=mission_service,
     )
 
 
 def create_mission_service(configuration: Settings) -> MissionService:
+    transcripts = (
+        TransientTranscriptStore(
+            configuration.redis_url,
+            configuration.content_encryption_key.get_secret_value(),
+            configuration.content_encryption_key_version,
+            configuration.pedagogy_content_ttl_seconds,
+        )
+        if configuration.content_encryption_key is not None
+        else None
+    )
     return MissionService(
         settings=configuration,
         catalog=MissionCatalog(),
@@ -64,6 +79,7 @@ def create_mission_service(configuration: Settings) -> MissionService:
             configuration.redis_url,
             configuration.pedagogy_idempotency_ttl_seconds,
         ),
+        transcripts=transcripts,
     )
 
 
@@ -85,8 +101,11 @@ app = FastAPI(
     openapi_url=None,
     lifespan=lifespan,
 )
-app.state.realtime_service = create_realtime_service(settings)
 app.state.mission_service = create_mission_service(settings)
+app.state.realtime_service = create_realtime_service(
+    settings,
+    app.state.mission_service,
+)
 app.state.settings = settings
 app.include_router(pedagogy_router)
 
@@ -274,6 +293,7 @@ async def create_realtime_call(
         sdp_offer,
         x_installation_id,
         idempotency_key,
+        mission_mode=mission_session_id is not None,
     )
     if mission_session_id is not None:
         await request.app.state.mission_service.repository.link_voice_session(

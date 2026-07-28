@@ -1,3 +1,5 @@
+import base64
+import binascii
 from functools import lru_cache
 from typing import Literal
 
@@ -26,6 +28,7 @@ class Settings(BaseSettings):
     openai_api_key: SecretStr | None = None
     openai_realtime_model: str = "gpt-realtime-2.1-mini"
     openai_realtime_voice: str = "marin"
+    openai_transcription_model: str = "gpt-4o-mini-transcribe-2025-12-15"
     installation_hash_secret: SecretStr | None = None
     realtime_create_timeout_seconds: float = Field(default=15.0, gt=0, le=30)
     realtime_sideband_timeout_seconds: float = Field(default=10.0, gt=0, le=30)
@@ -63,11 +66,19 @@ class Settings(BaseSettings):
     def pedagogy_configuration_valid(self) -> bool:
         if not self.pedagogy_enabled:
             return True
-        if not self.installation_hash_secret or not self.pedagogical_evaluation_model:
+        if (
+            not self.installation_hash_secret
+            or not self.pedagogical_evaluation_model
+            or not self.openai_api_key
+            or not self.content_encryption_key
+        ):
             return False
-        if self.content_retention_enabled and not self.content_encryption_key:
+        try:
+            encoded = self.content_encryption_key.get_secret_value()
+            key = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4))
+        except (ValueError, binascii.Error):
             return False
-        return True
+        return len(key) == 32
 
 
 @lru_cache

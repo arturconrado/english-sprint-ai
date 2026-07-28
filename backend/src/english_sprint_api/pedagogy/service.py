@@ -8,6 +8,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
 from english_sprint_api.config import Settings
+from english_sprint_api.pedagogy.content_store import TransientTranscriptStore
 from english_sprint_api.pedagogy.generated_state import MissionEvent
 from english_sprint_api.pedagogy.missions import MissionCatalog, MissionDefinition
 from english_sprint_api.pedagogy.orchestration import (
@@ -51,12 +52,14 @@ class MissionService:
         repository: MissionRepository,
         queue: EvaluationQueue,
         store: PedagogyStore,
+        transcripts: TransientTranscriptStore | None = None,
     ) -> None:
         self._settings = settings
         self.catalog = catalog
         self.repository = repository
         self.queue = queue
         self.store = store
+        self.transcripts = transcripts
 
     def _require_enabled(self) -> None:
         if not self._settings.pedagogy_enabled:
@@ -95,6 +98,8 @@ class MissionService:
     async def shutdown(self) -> None:
         await self.queue.close()
         await self.store.close()
+        if self.transcripts is not None:
+            await self.transcripts.close()
 
     def list_missions(self) -> tuple[MissionDefinition, ...]:
         return self.catalog.list()
@@ -226,6 +231,8 @@ class MissionService:
             )
         except RuntimeError as error:
             raise self._conflict(error) from error
+        if self.transcripts is not None:
+            await self.transcripts.bind_pending(session_id, record.attempt_id)
         try:
             await self.queue.enqueue(record.attempt_id)
         except Exception as error:
@@ -238,6 +245,30 @@ class MissionService:
                 retryable=True,
             ) from error
         return record
+
+    async def observe(
+        self,
+        voice_session_id: UUID,
+        event: dict[str, object],
+    ) -> None:
+        if (
+            self.transcripts is None
+            or event.get("type") != "conversation.item.input_audio_transcription.completed"
+        ):
+            return
+        transcript = event.get("transcript")
+        if not isinstance(transcript, str) or not transcript.strip():
+            return
+        target = await self.repository.transcript_target_for_voice_session(
+            voice_session_id,
+        )
+        if target is None:
+            return
+        session_id, attempt_id = target
+        if attempt_id is None:
+            await self.transcripts.put_pending(session_id, transcript)
+        else:
+            await self.transcripts.put(attempt_id, transcript)
 
     async def command(
         self,
