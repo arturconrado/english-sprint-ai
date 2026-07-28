@@ -1,0 +1,147 @@
+name: Pedagogical E2E
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pedagogical-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pedagogical-e2e:
+    name: pedagogical-e2e
+    if: >-
+      github.repository == 'arturconrado/english-sprint-ai' &&
+      github.actor == github.repository_owner
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:17.5-alpine
+        env:
+          POSTGRES_DB: english_sprint
+          POSTGRES_USER: english_sprint
+          POSTGRES_PASSWORD: english_sprint
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U english_sprint -d english_sprint"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+      redis:
+        image: redis:8.0.3-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      APP_ENV: test
+      DATABASE_URL: postgresql://english_sprint:english_sprint@localhost:5432/english_sprint
+      REDIS_URL: redis://localhost:6379/0
+      OTEL_ENABLED: "false"
+      REALTIME_ENABLED: "true"
+      PEDAGOGY_ENABLED: "true"
+      REALTIME_PROVIDER: openai
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      OPENAI_REALTIME_MODEL: gpt-realtime-2.1-mini
+      OPENAI_REALTIME_VOICE: marin
+      OPENAI_TRANSCRIPTION_MODEL: gpt-4o-mini-transcribe-2025-12-15
+      PEDAGOGICAL_EVALUATION_MODEL: gpt-5.4-mini-2026-03-17
+      CONTENT_ENCRYPTION_KEY_VERSION: e2e-v1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Require protected provider secret
+        run: test -n "${OPENAI_API_KEY}"
+
+      - name: Create ephemeral test keys
+        run: |
+          content_key="$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+          installation_secret="$(openssl rand -hex 32)"
+          echo "::add-mask::${content_key}"
+          echo "::add-mask::${installation_secret}"
+          echo "CONTENT_ENCRYPTION_KEY=${content_key}" >> "${GITHUB_ENV}"
+          echo "INSTALLATION_HASH_SECRET=${installation_secret}" >> "${GITHUB_ENV}"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.11.7"
+          enable-cache: true
+
+      - name: Install locked dependencies and synthetic speech tooling
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes espeak-ng postgresql-client sox
+          npm ci
+          npx playwright install --with-deps chromium
+          uv sync --project backend --group dev --locked
+
+      - name: Run one real pedagogical session
+        run: |
+          cleanup() {
+            kill "${worker_pid:-}" "${backend_pid:-}" 2>/dev/null || true
+          }
+          trap cleanup EXIT INT TERM
+          phrase="/tmp/english-sprint-authorized-phrase.wav"
+          silence="/tmp/english-sprint-authorized-silence.wav"
+          fixture="/tmp/english-sprint-authorized-session.wav"
+          espeak-ng -s 125 -w "${phrase}" \
+            "I lead the migration last year and coordinated five engineers."
+          sox -n -r 48000 -c 1 "${silence}" trim 0 5
+          sox "${phrase}" "${silence}" "${phrase}" "${silence}" \
+            "${phrase}" "${silence}" "${fixture}"
+          chmod 0600 "${fixture}"
+          (
+            cd backend
+            uv run alembic upgrade head
+            exec env PYTHONPATH=src uv run python -m \
+              english_sprint_api.pedagogy.worker_main
+          ) &
+          worker_pid=$!
+          uv run --project backend uvicorn english_sprint_api.main:app \
+            --app-dir backend/src --host 127.0.0.1 --port 8000 &
+          backend_pid=$!
+          for attempt in $(seq 1 30); do
+            curl --fail --silent http://127.0.0.1:8000/readyz && break
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8000/readyz
+          PEDAGOGICAL_E2E_AUDIO_FIXTURE="${fixture}" node scripts/pedagogical-e2e.mjs
+
+      - name: Enforce call and cost ceilings
+        run: |
+          realtime_calls="$(psql "${DATABASE_URL}" --tuples-only --no-align \
+            --command 'SELECT count(*) FROM voice_sessions')"
+          text_calls="$(psql "${DATABASE_URL}" --tuples-only --no-align \
+            --command 'SELECT count(*) FROM model_usage')"
+          estimated_cost="$(psql "${DATABASE_URL}" --tuples-only --no-align \
+            --command 'SELECT COALESCE(sum(estimated_cost_usd), 0) FROM model_usage')"
+          test "${realtime_calls}" -eq 1
+          test "${text_calls}" -le 4
+          awk -v cost="${estimated_cost}" 'BEGIN { exit !(cost <= 2.0) }'
+
+      - name: Verify sensitive artifacts are absent
+        if: always()
+        run: |
+          test -z "$(find . -type f \( -name '*.wav' -o -name '*.trace' \) -print)"
+          test -z "$(find . -type f -path '*/test-results/*' -print)"
