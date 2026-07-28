@@ -10,5 +10,8 @@
   "devDependencies": {
     "playwright": "1.61.1",
     "@stoplight/spectral-cli": "6.16.2"
+  },
+  "overrides": {
+    "brace-expansion": "5.0.8"
   }
 }
