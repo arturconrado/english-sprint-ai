@@ -7,7 +7,7 @@ from english_sprint_api import main
 MISSION_ID = UUID("5d52dd33-0a70-4f53-9bb8-c61aa7b602d7")
 
 
-async def test_public_mission_catalog_has_two_immutable_missions() -> None:
+async def test_public_mission_catalog_has_seven_immutable_launch_missions() -> None:
     async with AsyncClient(
         transport=ASGITransport(app=main.app),
         base_url="http://test",
@@ -17,7 +17,12 @@ async def test_public_mission_catalog_has_two_immutable_missions() -> None:
 
     assert response.status_code == 200
     assert [item["slug"] for item in response.json()] == [
+        "architecture-decision",
+        "behavioral-challenge",
+        "career-history",
         "explain-technical-project",
+        "final-simulation",
+        "international-meeting",
         "professional-introduction",
     ]
     assert detail.status_code == 200
@@ -33,19 +38,17 @@ async def test_mission_creation_fails_closed_while_disabled() -> None:
         response = await client.post(
             "/v1/mission-sessions",
             headers={
-                "X-Installation-Id": "installation-123456",
+                "Authorization": "Bearer unavailable-with-auth-disabled",
                 "Idempotency-Key": "4a019e0a-c515-43e3-a3f1-c604910e8536",
             },
             json={
                 "mission_id": str(MISSION_ID),
-                "processing_consent": True,
-                "content_retention_consent": False,
             },
         )
 
     assert response.status_code == 503
     assert response.headers["content-type"].startswith("application/problem+json")
-    assert response.json()["code"] == "pedagogy_disabled"
+    assert response.json()["code"] == "authentication_disabled"
     assert "installation" not in str(response.json()).lower()
 
 

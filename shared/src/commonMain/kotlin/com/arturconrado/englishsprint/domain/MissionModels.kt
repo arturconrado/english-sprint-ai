@@ -30,7 +30,6 @@ data class MissionSession(
 
 data class CreatedMissionSession(
     val session: MissionSession,
-    val bearerToken: String,
 )
 
 data class MissionAttempt(

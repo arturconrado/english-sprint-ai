@@ -3,10 +3,11 @@ from collections.abc import Awaitable, Callable
 
 import asyncpg
 from redis.asyncio import Redis
+from redis.exceptions import RedisError
 
 from english_sprint_api.config import Settings
 
-MIGRATION_HEAD = "0003_speak_loop"
+MIGRATION_HEAD = "0005_free_beta"
 Check = dict[str, str]
 AsyncCheck = Callable[[Settings], Awaitable[Check]]
 
@@ -22,6 +23,8 @@ async def check_configuration(settings: Settings) -> Check:
         and settings.app_env
         and settings.realtime_configuration_valid
         and settings.pedagogy_configuration_valid
+        and settings.auth_configuration_valid
+        and settings.billing_configuration_valid
     )
     return dependency("configuration", valid)
 
@@ -43,7 +46,7 @@ async def check_redis(settings: Settings) -> Check:
     client = Redis.from_url(settings.redis_url, socket_connect_timeout=2, socket_timeout=2)
     try:
         return dependency("redis", bool(await client.ping()))
-    except (OSError, TimeoutError):
+    except (OSError, RedisError, TimeoutError):
         return dependency("redis", False)
     finally:
         await client.connection_pool.disconnect()

@@ -32,18 +32,12 @@ import kotlinx.serialization.encoding.*
  *
  *
  * @param missionId
- * @param processingConsent
- * @param contentRetentionConsent
  */
 @Serializable
 
 data class CreateMissionSessionRequest (
 
-    @SerialName(value = "mission_id") @Required val missionId: kotlin.String,
-
-    @SerialName(value = "processing_consent") @Required val processingConsent: kotlin.Boolean,
-
-    @SerialName(value = "content_retention_consent") @Required val contentRetentionConsent: kotlin.Boolean = false
+    @SerialName(value = "mission_id") @Required val missionId: kotlin.String
 
 ) {
 

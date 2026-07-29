@@ -20,23 +20,20 @@ import io.ktor.http.contentType
 interface RealtimeSessionApi {
     suspend fun createCall(
         sdpOffer: String,
-        installationId: String,
+        firebaseIdToken: String,
+        usageReservationId: String,
         idempotencyKey: String,
-        missionAuthorization: MissionCallAuthorization? = null,
+        missionSessionId: String? = null,
     ): RealtimeCallAnswer
 
-    suspend fun getCall(sessionId: String): VoiceSessionMetadata
+    suspend fun getCall(sessionId: String, firebaseIdToken: String): VoiceSessionMetadata
 
     suspend fun deleteCall(
         sessionId: String,
+        firebaseIdToken: String,
         terminationReason: String = "user_finished",
     )
 }
-
-data class MissionCallAuthorization(
-    val sessionId: String,
-    val bearerToken: String,
-)
 
 class RealtimeApiException(
     val statusCode: Int,
@@ -50,18 +47,17 @@ class KtorRealtimeSessionApi(
 ) : RealtimeSessionApi {
     override suspend fun createCall(
         sdpOffer: String,
-        installationId: String,
+        firebaseIdToken: String,
+        usageReservationId: String,
         idempotencyKey: String,
-        missionAuthorization: MissionCallAuthorization?,
+        missionSessionId: String?,
     ): RealtimeCallAnswer {
         val response = client.post("$baseUrl/v1/realtime/calls") {
             contentType(ContentType.parse("application/sdp"))
-            header("X-Installation-Id", installationId)
+            header("Authorization", "Bearer $firebaseIdToken")
+            header("X-Voice-Reservation-Id", usageReservationId)
             header("Idempotency-Key", idempotencyKey)
-            missionAuthorization?.let {
-                header("X-Mission-Session-Id", it.sessionId)
-                header("Authorization", "Bearer ${it.bearerToken}")
-            }
+            missionSessionId?.let { header("X-Mission-Session-Id", it) }
             setBody(sdpOffer)
         }
         ensureSuccess(response.status, response)
@@ -78,14 +74,24 @@ class KtorRealtimeSessionApi(
         )
     }
 
-    override suspend fun getCall(sessionId: String): VoiceSessionMetadata {
-        val response = client.get("$baseUrl/v1/realtime/calls/$sessionId")
+    override suspend fun getCall(
+        sessionId: String,
+        firebaseIdToken: String,
+    ): VoiceSessionMetadata {
+        val response = client.get("$baseUrl/v1/realtime/calls/$sessionId") {
+            header("Authorization", "Bearer $firebaseIdToken")
+        }
         ensureSuccess(response.status, response)
         return response.body<GeneratedVoiceSessionMetadata>().toDomain()
     }
 
-    override suspend fun deleteCall(sessionId: String, terminationReason: String) {
+    override suspend fun deleteCall(
+        sessionId: String,
+        firebaseIdToken: String,
+        terminationReason: String,
+    ) {
         val response = client.delete("$baseUrl/v1/realtime/calls/$sessionId") {
+            header("Authorization", "Bearer $firebaseIdToken")
             header("X-Termination-Reason", terminationReason)
         }
         if (response.status != HttpStatusCode.NoContent) {

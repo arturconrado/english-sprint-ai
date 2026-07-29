@@ -169,20 +169,36 @@ class DefaultModelRegistry:
         "You are a concise English tutor. Keep replies brief, correct mistakes gently, "
         "and ask exactly one useful follow-up question. Do not call tools."
     )
+    _DIAGNOSTIC_INSTRUCTIONS = (
+        "You are conducting a short professional English voice diagnosis. Ask the "
+        "learner to introduce themselves, describe a recent project, and explain one "
+        "work challenge. Ask one concise question at a time, do not teach or score "
+        "during the diagnosis, and finish politely. Do not call tools."
+    )
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
 
-    def session_config(self, mission_mode: bool = False) -> SessionConfig:
+    def session_config(
+        self,
+        mission_mode: bool = False,
+        diagnostic_mode: bool = False,
+    ) -> SessionConfig:
         return SessionConfig(
             model=self._settings.openai_realtime_model,
             voice=self._settings.openai_realtime_voice,
-            instructions=self._INSTRUCTIONS,
+            instructions=(
+                self._DIAGNOSTIC_INSTRUCTIONS
+                if diagnostic_mode
+                else self._INSTRUCTIONS
+            ),
             vad_threshold=self._settings.realtime_vad_threshold,
             vad_prefix_padding_ms=self._settings.realtime_vad_prefix_padding_ms,
             vad_silence_duration_ms=self._settings.realtime_vad_silence_duration_ms,
             create_response=not mission_mode,
             transcription_model=(
-                self._settings.openai_transcription_model if mission_mode else None
+                self._settings.openai_transcription_model
+                if mission_mode or diagnostic_mode
+                else None
             ),
         )

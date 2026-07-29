@@ -51,7 +51,7 @@ open class ApiClient(
 
     private val authentications: kotlin.collections.Map<String, Authentication> by lazy {
         mapOf(
-                "missionBearer" to HttpBearerAuth("bearer"),
+                "firebaseBearer" to HttpBearerAuth("bearer"),
                 "internalBearer" to HttpBearerAuth("bearer"))
     }
 

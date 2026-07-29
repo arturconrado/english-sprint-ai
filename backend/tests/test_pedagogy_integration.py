@@ -1,6 +1,6 @@
 import base64
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -9,6 +9,7 @@ import pytest
 from pydantic import SecretStr
 from redis.asyncio import Redis
 
+from english_sprint_api.auth.repository import AccountRepository
 from english_sprint_api.config import Settings
 from english_sprint_api.pedagogy.content_store import TransientTranscriptStore
 from english_sprint_api.pedagogy.evaluation import (
@@ -105,12 +106,17 @@ async def test_mission_session_is_idempotent_versioned_and_schedules_review() ->
         settings.pedagogy_idempotency_ttl_seconds,
     )
     service = MissionService(settings, MissionCatalog(), repository, queue, store)
-    installation_id = f"integration-{uuid4()}"
+    user_id = (
+        await AccountRepository(settings.database_url).upsert_identity(
+            f"integration-{uuid4()}",
+            "google",
+        )
+    ).user_id
     create_key = str(uuid4())
     await service.startup()
     created = await service.create_session(
         mission_id=service.catalog.list()[0].id,
-        installation_id=installation_id,
+        user_id=user_id,
         idempotency_key=create_key,
         processing_consent=True,
         content_retention_consent=False,
@@ -118,17 +124,16 @@ async def test_mission_session_is_idempotent_versioned_and_schedules_review() ->
     try:
         replay = await service.create_session(
             mission_id=created.record.mission_id,
-            installation_id=installation_id,
+            user_id=user_id,
             idempotency_key=create_key,
             processing_consent=True,
             content_retention_consent=False,
         )
         assert replay.record.session_id == created.record.session_id
-        assert replay.token == created.token
 
         with pytest.raises(RealtimeError) as unauthorized:
-            await service.get_session(created.record.session_id, "wrong-token")
-        assert unauthorized.value.status == 401
+            await service.get_session(created.record.session_id, uuid4())
+        assert unauthorized.value.status == 404
 
         scenario = await service.apply_event(
             created.record.session_id,
@@ -144,7 +149,7 @@ async def test_mission_session_is_idempotent_versioned_and_schedules_review() ->
 
         extended = await service.command(
             created.record.session_id,
-            created.token,
+            user_id,
             MissionCommand.NEED_MORE_TIME,
             waiting.state_version,
             uuid4(),
@@ -153,7 +158,7 @@ async def test_mission_session_is_idempotent_versioned_and_schedules_review() ->
         with pytest.raises(RealtimeError) as duplicate_extension:
             await service.command(
                 created.record.session_id,
-                created.token,
+                user_id,
                 MissionCommand.NEED_MORE_TIME,
                 waiting.state_version,
                 uuid4(),
@@ -162,7 +167,7 @@ async def test_mission_session_is_idempotent_versioned_and_schedules_review() ->
 
         attempt = await service.create_attempt(
             created.record.session_id,
-            created.token,
+            user_id,
             AttemptInput(
                 client_attempt_id=uuid4(),
                 state_version=waiting.state_version,
@@ -180,17 +185,21 @@ async def test_mission_session_is_idempotent_versioned_and_schedules_review() ->
         )
         completed = await service.complete(
             created.record.session_id,
-            created.token,
+            user_id,
             summarizing.state_version,
             uuid4(),
         )
         assert completed.state is MissionState.MISSION_COMPLETED
-        summary = await service.summary(created.record.session_id, created.token)
+        summary = await service.summary(created.record.session_id, user_id)
         assert summary["attempt_count"] == 1
         assert summary["content_retained"] is False
 
         connection = await asyncpg.connect(settings.database_url)
         try:
+            first_review = await connection.fetchrow(
+                "SELECT id, scheduled_at FROM review_items WHERE user_id = $1",
+                created.record.user_id,
+            )
             review_count = await connection.fetchval(
                 "SELECT count(*) FROM review_items WHERE user_id = $1",
                 created.record.user_id,
@@ -198,6 +207,26 @@ async def test_mission_session_is_idempotent_versioned_and_schedules_review() ->
         finally:
             await connection.close()
         assert review_count == 1
+        assert first_review is not None
+        second = await service.complete_review(
+            user_id,
+            first_review["id"],
+            uuid4(),
+        )
+        assert second["next_review"] is not None
+        assert (
+            second["next_review"]["scheduled_at"] - first_review["scheduled_at"]  # type: ignore[index]
+        ) == timedelta(days=2)
+        second_id = second["next_review"]["review_id"]  # type: ignore[index]
+        third = await service.complete_review(user_id, second_id, uuid4())
+        assert third["next_review"] is not None
+        assert (
+            third["next_review"]["scheduled_at"]  # type: ignore[index]
+            - second["next_review"]["scheduled_at"]  # type: ignore[index]
+        ) == timedelta(days=4)
+        third_id = third["next_review"]["review_id"]  # type: ignore[index]
+        final = await service.complete_review(user_id, third_id, uuid4())
+        assert final["next_review"] is None
     finally:
         connection = await asyncpg.connect(settings.database_url)
         try:
@@ -249,9 +278,15 @@ async def test_worker_persists_grounded_evaluation_and_promotes_skill() -> None:
     )
     service = MissionService(settings, MissionCatalog(), repository, queue, store)
     await service.startup()
+    user_id = (
+        await AccountRepository(settings.database_url).upsert_identity(
+            f"integration-{uuid4()}",
+            "google",
+        )
+    ).user_id
     created = await service.create_session(
         mission_id=service.catalog.list()[0].id,
-        installation_id=f"integration-{uuid4()}",
+        user_id=user_id,
         idempotency_key=str(uuid4()),
         processing_consent=True,
         content_retention_consent=False,
@@ -269,7 +304,7 @@ async def test_worker_persists_grounded_evaluation_and_promotes_skill() -> None:
         )
         attempt = await service.create_attempt(
             created.record.session_id,
-            created.token,
+            user_id,
             AttemptInput(
                 client_attempt_id=uuid4(),
                 state_version=waiting.state_version,

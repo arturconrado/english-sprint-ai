@@ -25,6 +25,7 @@ package com.arturconrado.englishsprint.generated.api
 
 import com.arturconrado.englishsprint.generated.dto.MissionSummary
 import com.arturconrado.englishsprint.generated.dto.ProblemDetails
+import com.arturconrado.englishsprint.generated.dto.ReviewCompletion
 import com.arturconrado.englishsprint.generated.dto.ReviewItem
 import com.arturconrado.englishsprint.generated.dto.UserSkillState
 
@@ -58,6 +59,41 @@ open class PedagogyApi : ApiClient {
     ): super(baseUrl = baseUrl, httpClient = httpClient)
 
     /**
+     * Complete a due review and schedule the next interval
+     * Idempotently records review completion and schedules the 3-day or 7-day follow-up when applicable.
+     * @param reviewId
+     * @param idempotencyKey
+     * @return ReviewCompletion
+     */
+    @Suppress("UNCHECKED_CAST")
+    open suspend fun completeReview(reviewId: kotlin.String, idempotencyKey: kotlin.String): HttpResponse<ReviewCompletion> {
+
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
+
+        val localVariableBody =
+            io.ktor.client.utils.EmptyContent
+
+        val localVariableQuery = mutableMapOf<String, List<String>>()
+        val localVariableHeaders = mutableMapOf<String, String>()
+        idempotencyKey?.apply { localVariableHeaders["Idempotency-Key"] = this.toString() }
+
+        val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.POST,
+            "/v1/reviews/{review_id}/complete".replace("{" + "review_id" + "}", "$reviewId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+        )
+
+        return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+        ).wrap()
+    }
+
+
+    /**
      * Read sanitized evidence and the next review
      * Returns only evidence permitted by the session retention policy.
      * @param sessionId
@@ -66,7 +102,7 @@ open class PedagogyApi : ApiClient {
     @Suppress("UNCHECKED_CAST")
     open suspend fun getMissionSummary(sessionId: kotlin.String): HttpResponse<MissionSummary> {
 
-        val localVariableAuthNames = listOf<String>("missionBearer")
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody =
             io.ktor.client.utils.EmptyContent
@@ -98,7 +134,7 @@ open class PedagogyApi : ApiClient {
     @Suppress("UNCHECKED_CAST")
     open suspend fun listDueReviews(): HttpResponse<kotlin.collections.List<ReviewItem>> {
 
-        val localVariableAuthNames = listOf<String>("missionBearer")
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody =
             io.ktor.client.utils.EmptyContent
@@ -139,7 +175,7 @@ open class PedagogyApi : ApiClient {
     @Suppress("UNCHECKED_CAST")
     open suspend fun listSkills(): HttpResponse<kotlin.collections.List<UserSkillState>> {
 
-        val localVariableAuthNames = listOf<String>("missionBearer")
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody =
             io.ktor.client.utils.EmptyContent

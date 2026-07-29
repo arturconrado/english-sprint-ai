@@ -156,6 +156,7 @@ class MissionRepository:
         *,
         mission: MissionDefinition,
         user_id: UUID,
+        account_id: UUID,
         token_hash: str,
         token_expires_at: datetime,
         processing_consent: bool,
@@ -167,19 +168,20 @@ class MissionRepository:
             row = await connection.fetchrow(
                 """
                 INSERT INTO mission_sessions (
-                    id, mission_version_id, user_id, session_token_hash,
+                    id, mission_version_id, user_id, account_id, session_token_hash,
                     state, state_version, processing_consent,
                     content_retention_consent, token_expires_at
                 ) VALUES (
-                    $1, $2, $3, $4, 'MISSION_STARTING', 1, $5, $6, $7
+                    $1, $2, $3, $4, $5, 'MISSION_STARTING', 1, $6, $7, $8
                 )
                 RETURNING *,
-                    $8::uuid AS mission_id,
-                    $9::integer AS mission_version
+                    $9::uuid AS mission_id,
+                    $10::integer AS mission_version
                 """,
                 session_id,
                 self.mission_version_id(mission),
                 user_id,
+                account_id,
                 token_hash,
                 processing_consent,
                 content_retention_consent,
@@ -617,12 +619,13 @@ class MissionRepository:
                             """
                             INSERT INTO review_items (
                                 id, user_id, mission_id, skill_id,
-                                source_attempt_id, review_type, scheduled_at, status
+                                source_attempt_id, review_type, sequence_number,
+                                scheduled_at, status
                             ) VALUES (
-                                $1, $2, $3, $4, $5, 'generic_skill', $6, 'scheduled'
+                                $1, $2, $3, $4, $5, 'generic_skill', 1, $6, 'scheduled'
                             )
                             ON CONFLICT (
-                                user_id, source_attempt_id, skill_id
+                                user_id, source_attempt_id, skill_id, sequence_number
                             ) DO NOTHING
                             """,
                             review_id,
@@ -649,6 +652,46 @@ class MissionRepository:
                     session_id,
                     record.content_retention_consent,
                 )
+                completed_day = await connection.fetchrow(
+                    """
+                    UPDATE sprint_days day
+                       SET status = 'completed', completed_at = $3
+                      FROM sprints sprint
+                     WHERE day.sprint_id = sprint.id
+                       AND sprint.user_id = $1
+                       AND sprint.status = 'active'
+                       AND day.mission_id = $2
+                       AND day.status IN ('available', 'completed')
+                    RETURNING day.sprint_id, day.day_number
+                    """,
+                    record.user_id,
+                    record.mission_id,
+                    completed_at,
+                )
+                if completed_day is not None:
+                    if completed_day["day_number"] < 7:
+                        await connection.execute(
+                            """
+                            UPDATE sprint_days
+                               SET status = 'available'
+                             WHERE sprint_id = $1
+                               AND day_number = $2
+                               AND status = 'locked'
+                            """,
+                            completed_day["sprint_id"],
+                            completed_day["day_number"] + 1,
+                        )
+                    else:
+                        await connection.execute(
+                            """
+                            UPDATE sprints
+                               SET status = 'completed',
+                                   completed_at = $2
+                             WHERE id = $1
+                            """,
+                            completed_day["sprint_id"],
+                            completed_at,
+                        )
                 if updated is None:
                     raise RuntimeError("Mission session update returned no row.")
                 return self._session(updated)
@@ -1171,7 +1214,7 @@ class MissionRepository:
                 await connection.fetch(
                     """
                 SELECT r.id AS review_id, r.mission_id, r.skill_id, r.review_type,
-                       r.scheduled_at,
+                       r.scheduled_at, r.sequence_number,
                        CASE
                            WHEN r.status = 'scheduled' AND r.scheduled_at <= CURRENT_TIMESTAMP
                            THEN 'due'
@@ -1186,6 +1229,113 @@ class MissionRepository:
                     user_id,
                 ),
             )
+        finally:
+            await connection.close()
+
+    async def complete_review(
+        self,
+        user_id: UUID,
+        review_id: UUID,
+        idempotency_key: UUID,
+    ) -> dict[str, object]:
+        connection = await self._connect()
+        try:
+            async with connection.transaction():
+                row = await connection.fetchrow(
+                    """
+                    SELECT *
+                      FROM review_items
+                     WHERE id = $1 AND user_id = $2
+                     FOR UPDATE
+                    """,
+                    review_id,
+                    user_id,
+                )
+                if row is None:
+                    raise KeyError(review_id)
+                replay = await connection.fetchval(
+                    """
+                    SELECT 1 FROM review_mutations
+                     WHERE review_id = $1 AND idempotency_key = $2
+                    """,
+                    review_id,
+                    idempotency_key,
+                )
+                next_review = None
+                if row["sequence_number"] < 3:
+                    next_review = await connection.fetchrow(
+                        """
+                        SELECT id AS review_id, mission_id, skill_id, review_type,
+                               scheduled_at, status, sequence_number
+                          FROM review_items
+                         WHERE user_id = $1
+                           AND source_attempt_id = $2
+                           AND skill_id = $3
+                           AND sequence_number = $4
+                        """,
+                        user_id,
+                        row["source_attempt_id"],
+                        row["skill_id"],
+                        row["sequence_number"] + 1,
+                    )
+                if replay is not None:
+                    return {
+                        "completed_review_id": review_id,
+                        "next_review": dict(next_review) if next_review else None,
+                    }
+                if row["status"] not in {"scheduled", "completed"}:
+                    raise RuntimeError("review_not_completable")
+                await connection.execute(
+                    """
+                    UPDATE review_items
+                       SET status = 'completed',
+                           completed_at = COALESCE(completed_at, CURRENT_TIMESTAMP)
+                     WHERE id = $1
+                    """,
+                    review_id,
+                )
+                await connection.execute(
+                    """
+                    INSERT INTO review_mutations (id, review_id, idempotency_key)
+                    VALUES ($1, $2, $3)
+                    ON CONFLICT (review_id, idempotency_key) DO NOTHING
+                    """,
+                    uuid4(),
+                    review_id,
+                    idempotency_key,
+                )
+                if row["sequence_number"] < 3:
+                    next_sequence = row["sequence_number"] + 1
+                    delay = timedelta(days=2 if next_sequence == 2 else 4)
+                    next_id = uuid5(
+                        UUID("3e6ac609-274a-4d35-9bc1-e558a14ca748"),
+                        f"{review_id}:{next_sequence}",
+                    )
+                    next_review = await connection.fetchrow(
+                        """
+                        INSERT INTO review_items (
+                            id, user_id, mission_id, skill_id, source_attempt_id,
+                            review_type, sequence_number, scheduled_at, status
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'scheduled')
+                        ON CONFLICT (
+                            user_id, source_attempt_id, skill_id, sequence_number
+                        ) DO UPDATE SET scheduled_at = review_items.scheduled_at
+                        RETURNING id AS review_id, mission_id, skill_id, review_type,
+                                  scheduled_at, status, sequence_number
+                        """,
+                        next_id,
+                        user_id,
+                        row["mission_id"],
+                        row["skill_id"],
+                        row["source_attempt_id"],
+                        row["review_type"],
+                        next_sequence,
+                        row["scheduled_at"] + delay,
+                    )
+                return {
+                    "completed_review_id": review_id,
+                    "next_review": dict(next_review) if next_review else None,
+                }
         finally:
             await connection.close()
 

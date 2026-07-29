@@ -98,6 +98,15 @@ def test_mission_session_disables_automatic_response_and_enables_transcription()
     assert input_audio["transcription"]["model"] == config.transcription_model
 
 
+def test_diagnostic_session_uses_diagnostic_prompt_and_transcription() -> None:
+    settings = Settings(otel_enabled=False)
+    config = DefaultModelRegistry(settings).session_config(diagnostic_mode=True)
+
+    assert config.create_response is True
+    assert "professional English voice diagnosis" in config.instructions
+    assert config.transcription_model == "gpt-4o-mini-transcribe-2025-12-15"
+
+
 async def test_sideband_is_configured_before_being_returned(
     monkeypatch: MonkeyPatch,
 ) -> None:

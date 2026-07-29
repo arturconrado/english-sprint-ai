@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import hmac
-import secrets
 import socket
 from contextlib import suppress
 from dataclasses import dataclass
@@ -35,7 +33,6 @@ from english_sprint_api.realtime.errors import RealtimeError
 @dataclass(frozen=True, slots=True)
 class CreatedMissionSession:
     record: MissionSessionRecord
-    token: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,26 +94,6 @@ class MissionService:
                 detail="Pedagogical missions are disabled.",
             )
 
-    def _user_id(self, installation_id: str) -> UUID:
-        secret = self._settings.installation_hash_secret
-        if secret is None:
-            raise RealtimeError(
-                code="pedagogy_not_configured",
-                title="Missions unavailable",
-                status=503,
-                detail="Pedagogical identity is not configured.",
-            )
-        digest = hmac.new(
-            secret.get_secret_value().encode(),
-            installation_id.encode(),
-            hashlib.sha256,
-        ).digest()
-        return UUID(bytes=digest[:16])
-
-    @staticmethod
-    def _token_hash(token: str) -> str:
-        return hashlib.sha256(token.encode()).hexdigest()
-
     async def startup(self) -> None:
         if self._settings.pedagogy_enabled:
             await self.repository.sync_catalog(self.catalog)
@@ -159,7 +136,7 @@ class MissionService:
         self,
         *,
         mission_id: UUID,
-        installation_id: str,
+        user_id: UUID,
         idempotency_key: str,
         processing_consent: bool,
         content_retention_consent: bool,
@@ -180,13 +157,12 @@ class MissionService:
                 detail="Content retention is not enabled in this environment.",
             )
         mission = self.get_mission(mission_id)
-        user_id = self._user_id(installation_id)
         scope = f"create:{user_id}"
         cached = await self.store.get_operation(scope, idempotency_key)
         if cached:
             record = await self.repository.get_session(UUID(cached["session_id"]))
-            if record is not None:
-                return CreatedMissionSession(record, cached["token"])
+            if record is not None and record.user_id == user_id:
+                return CreatedMissionSession(record)
         lock_token = uuid4()
         if not await self.store.acquire_lock(scope, idempotency_key, lock_token):
             raise RealtimeError(
@@ -197,11 +173,11 @@ class MissionService:
                 retryable=True,
             )
         try:
-            token = secrets.token_urlsafe(32)
             record = await self.repository.create_session(
                 mission=mission,
                 user_id=user_id,
-                token_hash=self._token_hash(token),
+                account_id=user_id,
+                token_hash=hashlib.sha256(str(uuid4()).encode()).hexdigest(),
                 token_expires_at=datetime.now(UTC)
                 + timedelta(days=self._settings.pedagogy_session_token_days),
                 processing_consent=processing_consent,
@@ -210,47 +186,37 @@ class MissionService:
             await self.store.set_operation(
                 scope,
                 idempotency_key,
-                {"session_id": str(record.session_id), "token": token},
+                {"session_id": str(record.session_id)},
             )
-            return CreatedMissionSession(record, token)
+            return CreatedMissionSession(record)
         finally:
             await self.store.release_lock(scope, idempotency_key, lock_token)
 
-    async def authenticate(
+    async def authorize(
         self,
-        token: str,
-        session_id: UUID | None = None,
+        user_id: UUID,
+        session_id: UUID,
     ) -> MissionSessionRecord:
-        token_hash = self._token_hash(token)
-        record = await self.repository.find_by_token_hash(token_hash)
-        valid = record is not None and hmac.compare_digest(
-            record.session_token_hash,
-            token_hash,
-        )
-        if (
-            not valid
-            or record is None
-            or record.token_expires_at <= datetime.now(UTC)
-            or (session_id is not None and record.session_id != session_id)
-        ):
+        record = await self.repository.get_session(session_id)
+        if record is None or record.user_id != user_id:
             raise RealtimeError(
-                code="invalid_mission_token",
-                title="Unauthorized",
-                status=401,
-                detail="The mission-session bearer token is invalid or expired.",
+                code="mission_session_not_found",
+                title="Mission session not found",
+                status=404,
+                detail="No mission session exists with this identifier.",
             )
         return record
 
-    async def get_session(self, session_id: UUID, token: str) -> MissionSessionRecord:
-        return await self.authenticate(token, session_id)
+    async def get_session(self, session_id: UUID, user_id: UUID) -> MissionSessionRecord:
+        return await self.authorize(user_id, session_id)
 
     async def create_attempt(
         self,
         session_id: UUID,
-        token: str,
+        user_id: UUID,
         attempt: AttemptInput,
     ) -> AttemptRecord:
-        await self.authenticate(token, session_id)
+        await self.authorize(user_id, session_id)
         if attempt.completed_at < attempt.started_at:
             raise RealtimeError(
                 code="invalid_attempt_time",
@@ -446,12 +412,12 @@ class MissionService:
     async def command(
         self,
         session_id: UUID,
-        token: str,
+        user_id: UUID,
         command: MissionCommand,
         state_version: int,
         idempotency_key: UUID,
     ) -> MissionSessionRecord:
-        record = await self.authenticate(token, session_id)
+        record = await self.authorize(user_id, session_id)
         if record.state_version != state_version:
             raise self._conflict(RuntimeError("stale_state_version"))
         controller = MissionSessionController(
@@ -495,11 +461,11 @@ class MissionService:
     async def complete(
         self,
         session_id: UUID,
-        token: str,
+        user_id: UUID,
         state_version: int,
         idempotency_key: UUID,
     ) -> MissionSessionRecord:
-        await self.authenticate(token, session_id)
+        await self.authorize(user_id, session_id)
         try:
             return await self.repository.complete_session(
                 session_id=session_id,
@@ -512,20 +478,20 @@ class MissionService:
     async def cancel(
         self,
         session_id: UUID,
-        token: str,
+        user_id: UUID,
         state_version: int,
         idempotency_key: UUID,
     ) -> MissionSessionRecord:
         return await self.command(
             session_id,
-            token,
+            user_id,
             MissionCommand.CANCEL,
             state_version,
             idempotency_key,
         )
 
-    async def summary(self, session_id: UUID, token: str) -> dict[str, object]:
-        await self.authenticate(token, session_id)
+    async def summary(self, session_id: UUID, user_id: UUID) -> dict[str, object]:
+        await self.authorize(user_id, session_id)
         row = await self.repository.summary(session_id)
         if row is None:
             raise RealtimeError(
@@ -536,13 +502,33 @@ class MissionService:
             )
         return dict(row)
 
-    async def skills(self, token: str) -> list[dict[str, object]]:
-        record = await self.authenticate(token)
-        return [dict(row) for row in await self.repository.list_skill_states(record.user_id)]
+    async def skills(self, user_id: UUID) -> list[dict[str, object]]:
+        return [dict(row) for row in await self.repository.list_skill_states(user_id)]
 
-    async def due_reviews(self, token: str) -> list[dict[str, object]]:
-        record = await self.authenticate(token)
-        return [dict(row) for row in await self.repository.list_due_reviews(record.user_id)]
+    async def due_reviews(self, user_id: UUID) -> list[dict[str, object]]:
+        return [dict(row) for row in await self.repository.list_due_reviews(user_id)]
+
+    async def complete_review(
+        self,
+        user_id: UUID,
+        review_id: UUID,
+        idempotency_key: UUID,
+    ) -> dict[str, object]:
+        try:
+            return await self.repository.complete_review(
+                user_id,
+                review_id,
+                idempotency_key,
+            )
+        except KeyError as error:
+            raise RealtimeError(
+                code="review_not_found",
+                title="Review not found",
+                status=404,
+                detail="No review exists with this identifier.",
+            ) from error
+        except RuntimeError as error:
+            raise self._conflict(error) from error
 
     @staticmethod
     def _conflict(error: Exception) -> RealtimeError:

@@ -58,34 +58,32 @@ open class RealtimeApi : ApiClient {
 
     /**
      * Create a realtime voice call
-     * Exchanges an Android WebRTC offer for a provider SDP answer.
-     * @param xInstallationId Opaque installation identifier. It is HMAC-hashed before persistence.
+     * Exchanges an authenticated Android WebRTC offer for a provider SDP answer after validating a server-side voice allowance reservation.
      * @param idempotencyKey
+     * @param xVoiceReservationId Active server-side allowance reservation owned by the authenticated account.
      * @param body
      * @param xMissionSessionId Mission session to link. Authorization is required when present. (optional)
-     * @param authorization Mission bearer required together with X-Mission-Session-Id. (optional)
      * @return kotlin.String
      */
     @Suppress("UNCHECKED_CAST")
-    open suspend fun createRealtimeCall(xInstallationId: kotlin.String, idempotencyKey: kotlin.String, body: kotlin.String, xMissionSessionId: kotlin.String? = null, authorization: kotlin.String? = null): HttpResponse<kotlin.String> {
+    open suspend fun createRealtimeCall(idempotencyKey: kotlin.String, xVoiceReservationId: kotlin.String, body: kotlin.String, xMissionSessionId: kotlin.String? = null): HttpResponse<kotlin.String> {
 
-        val localVariableAuthNames = listOf<String>()
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody = body
 
         val localVariableQuery = mutableMapOf<String, List<String>>()
         val localVariableHeaders = mutableMapOf<String, String>()
-        xInstallationId?.apply { localVariableHeaders["X-Installation-Id"] = this.toString() }
         idempotencyKey?.apply { localVariableHeaders["Idempotency-Key"] = this.toString() }
         xMissionSessionId?.apply { localVariableHeaders["X-Mission-Session-Id"] = this.toString() }
-        authorization?.apply { localVariableHeaders["Authorization"] = this.toString() }
+        xVoiceReservationId?.apply { localVariableHeaders["X-Voice-Reservation-Id"] = this.toString() }
 
         val localVariableConfig = RequestConfig<kotlin.Any?>(
             RequestMethod.POST,
             "/v1/realtime/calls",
             query = localVariableQuery,
             headers = localVariableHeaders,
-            requiresAuthentication = false,
+            requiresAuthentication = true,
         )
 
         return jsonRequest(
@@ -106,7 +104,7 @@ open class RealtimeApi : ApiClient {
      */
     open suspend fun deleteRealtimeCall(sessionId: kotlin.String, xTerminationReason: TerminationReason? = null): HttpResponse<Unit> {
 
-        val localVariableAuthNames = listOf<String>()
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody =
             io.ktor.client.utils.EmptyContent
@@ -120,7 +118,7 @@ open class RealtimeApi : ApiClient {
             "/v1/realtime/calls/{session_id}".replace("{" + "session_id" + "}", "$sessionId"),
             query = localVariableQuery,
             headers = localVariableHeaders,
-            requiresAuthentication = false,
+            requiresAuthentication = true,
         )
 
         return request(
@@ -140,7 +138,7 @@ open class RealtimeApi : ApiClient {
     @Suppress("UNCHECKED_CAST")
     open suspend fun getRealtimeCall(sessionId: kotlin.String): HttpResponse<VoiceSessionMetadata> {
 
-        val localVariableAuthNames = listOf<String>()
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody =
             io.ktor.client.utils.EmptyContent
@@ -153,7 +151,7 @@ open class RealtimeApi : ApiClient {
             "/v1/realtime/calls/{session_id}".replace("{" + "session_id" + "}", "$sessionId"),
             query = localVariableQuery,
             headers = localVariableHeaders,
-            requiresAuthentication = false,
+            requiresAuthentication = true,
         )
 
         return request(

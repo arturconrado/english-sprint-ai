@@ -71,7 +71,7 @@ open class MissionsApi : ApiClient {
     @Suppress("UNCHECKED_CAST")
     open suspend fun cancelMissionSession(sessionId: kotlin.String, idempotencyKey: kotlin.String): HttpResponse<MissionSession> {
 
-        val localVariableAuthNames = listOf<String>("missionBearer")
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody =
             io.ktor.client.utils.EmptyContent
@@ -107,7 +107,7 @@ open class MissionsApi : ApiClient {
     @Suppress("UNCHECKED_CAST")
     open suspend fun completeMissionSession(sessionId: kotlin.String, idempotencyKey: kotlin.String, stateVersionRequest: StateVersionRequest): HttpResponse<MissionSession> {
 
-        val localVariableAuthNames = listOf<String>("missionBearer")
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody = stateVersionRequest
 
@@ -143,7 +143,7 @@ open class MissionsApi : ApiClient {
     @Suppress("UNCHECKED_CAST")
     open suspend fun createMissionAttempt(sessionId: kotlin.String, idempotencyKey: kotlin.String, createAttemptRequest: CreateAttemptRequest): HttpResponse<AttemptReceipt> {
 
-        val localVariableAuthNames = listOf<String>("missionBearer")
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody = createAttemptRequest
 
@@ -169,23 +169,21 @@ open class MissionsApi : ApiClient {
 
 
     /**
-     * Create an anonymous mission session
-     * Creates a consented session and returns its bearer token once.
-     * @param xInstallationId Opaque installation identifier. It is HMAC-hashed before persistence.
+     * Create an authenticated mission session
+     * Creates a session owned by the Firebase-authenticated account using the account&#39;s recorded consent choices.
      * @param idempotencyKey
      * @param createMissionSessionRequest
      * @return MissionSession
      */
     @Suppress("UNCHECKED_CAST")
-    open suspend fun createMissionSession(xInstallationId: kotlin.String, idempotencyKey: kotlin.String, createMissionSessionRequest: CreateMissionSessionRequest): HttpResponse<MissionSession> {
+    open suspend fun createMissionSession(idempotencyKey: kotlin.String, createMissionSessionRequest: CreateMissionSessionRequest): HttpResponse<MissionSession> {
 
-        val localVariableAuthNames = listOf<String>()
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody = createMissionSessionRequest
 
         val localVariableQuery = mutableMapOf<String, List<String>>()
         val localVariableHeaders = mutableMapOf<String, String>()
-        xInstallationId?.apply { localVariableHeaders["X-Installation-Id"] = this.toString() }
         idempotencyKey?.apply { localVariableHeaders["Idempotency-Key"] = this.toString() }
 
         val localVariableConfig = RequestConfig<kotlin.Any?>(
@@ -193,7 +191,7 @@ open class MissionsApi : ApiClient {
             "/v1/mission-sessions",
             query = localVariableQuery,
             headers = localVariableHeaders,
-            requiresAuthentication = false,
+            requiresAuthentication = true,
         )
 
         return jsonRequest(
@@ -247,7 +245,7 @@ open class MissionsApi : ApiClient {
     @Suppress("UNCHECKED_CAST")
     open suspend fun getMissionSession(sessionId: kotlin.String): HttpResponse<MissionSession> {
 
-        val localVariableAuthNames = listOf<String>("missionBearer")
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody =
             io.ktor.client.utils.EmptyContent
@@ -323,7 +321,7 @@ open class MissionsApi : ApiClient {
     @Suppress("UNCHECKED_CAST")
     open suspend fun sendMissionCommand(sessionId: kotlin.String, idempotencyKey: kotlin.String, missionCommandRequest: MissionCommandRequest): HttpResponse<MissionSession> {
 
-        val localVariableAuthNames = listOf<String>("missionBearer")
+        val localVariableAuthNames = listOf<String>("firebaseBearer")
 
         val localVariableBody = missionCommandRequest
 

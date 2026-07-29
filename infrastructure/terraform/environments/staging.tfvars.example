@@ -1,0 +1,7 @@
+project_id    = "english-sprint-staging"
+environment   = "staging"
+region        = "southamerica-east1"
+api_image     = "southamerica-east1-docker.pkg.dev/PROJECT/english-sprint-staging/api@sha256:REPLACE_WITH_64_HEX_DIGEST"
+min_instances = 0
+max_instances = 5
+alert_email   = "operations@example.com"

@@ -1,4 +1,3 @@
-import re
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from uuid import UUID, uuid4
@@ -7,7 +6,15 @@ from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 
+from english_sprint_api.auth.repository import AccountRepository
+from english_sprint_api.auth.routes import router as account_router
+from english_sprint_api.auth.service import AccountService
+from english_sprint_api.auth.verifier import FirebaseIdentityVerifier
 from english_sprint_api.config import Settings, get_settings
+from english_sprint_api.market.repository import MarketRepository
+from english_sprint_api.market.revenuecat import RevenueCatEntitlementProvider
+from english_sprint_api.market.routes import router as market_router
+from english_sprint_api.market.service import MarketService
 from english_sprint_api.observability import configure_observability
 from english_sprint_api.pedagogy.content_store import TransientTranscriptStore
 from english_sprint_api.pedagogy.missions import MissionCatalog
@@ -18,6 +25,7 @@ from english_sprint_api.pedagogy.service import MissionService
 from english_sprint_api.pedagogy.store import PedagogyStore
 from english_sprint_api.readiness import readiness_checks
 from english_sprint_api.realtime.errors import RealtimeError
+from english_sprint_api.realtime.models import SidebandEventObserver
 from english_sprint_api.realtime.provider import DefaultModelRegistry, OpenAIRealtimeProvider
 from english_sprint_api.realtime.repository import VoiceSessionRepository
 from english_sprint_api.realtime.service import SessionFactory
@@ -25,7 +33,6 @@ from english_sprint_api.realtime.store import RealtimeStore
 from generated.models import HealthResponse, ReadinessResponse, VoiceSessionMetadata
 
 MAX_SDP_BYTES = 65_536
-INSTALLATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{16,128}$")
 TERMINATION_REASONS = {
     "user_finished",
     "offline_command",
@@ -42,9 +49,19 @@ TERMINATION_REASONS = {
 settings = get_settings()
 
 
+class SidebandObservers:
+    def __init__(self, *observers: SidebandEventObserver) -> None:
+        self._observers = observers
+
+    async def observe(self, session_id: UUID, event: dict[str, object]) -> None:
+        for observer in self._observers:
+            await observer.observe(session_id, event)
+
+
 def create_realtime_service(
     configuration: Settings,
     mission_service: MissionService | None = None,
+    market_service: MarketService | None = None,
 ) -> SessionFactory:
     return SessionFactory(
         settings=configuration,
@@ -55,7 +72,29 @@ def create_realtime_service(
             configuration.redis_url,
             configuration.realtime_redis_ttl_seconds,
         ),
-        sideband_event_observer=mission_service,
+        sideband_event_observer=(
+            SidebandObservers(mission_service, market_service)
+            if mission_service is not None and market_service is not None
+            else mission_service or market_service
+        ),
+        allowance_settlement_observer=market_service,
+    )
+
+
+def create_account_service(configuration: Settings) -> AccountService:
+    return AccountService(
+        repository=AccountRepository(configuration.database_url),
+        verifier=FirebaseIdentityVerifier(configuration),
+        enabled=configuration.auth_enabled,
+    )
+
+
+def create_market_service(configuration: Settings) -> MarketService:
+    return MarketService(
+        settings=configuration,
+        repository=MarketRepository(configuration.database_url),
+        missions=MissionCatalog(),
+        entitlement_provider=RevenueCatEntitlementProvider(configuration),
     )
 
 
@@ -96,19 +135,24 @@ async def lifespan(application: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="English Sprint AI API",
-    version="0.2.0",
+    version="0.5.0",
     docs_url=None,
     redoc_url=None,
     openapi_url=None,
     lifespan=lifespan,
 )
+app.state.account_service = create_account_service(settings)
+app.state.market_service = create_market_service(settings)
 app.state.mission_service = create_mission_service(settings)
 app.state.realtime_service = create_realtime_service(
     settings,
     app.state.mission_service,
+    app.state.market_service,
 )
 app.state.mission_service.bind_realtime_control(app.state.realtime_service)
 app.state.settings = settings
+app.include_router(account_router)
+app.include_router(market_router)
 app.include_router(pedagogy_router)
 
 
@@ -174,14 +218,7 @@ def parse_session_id(value: str) -> UUID:
         ) from error
 
 
-def validate_headers(installation_id: str, idempotency_key: str) -> None:
-    if not INSTALLATION_ID_PATTERN.fullmatch(installation_id):
-        raise RealtimeError(
-            code="invalid_installation_id",
-            title="Invalid installation identifier",
-            status=400,
-            detail="The installation identifier has an invalid format.",
-        )
+def validate_idempotency_key(idempotency_key: str) -> None:
     try:
         UUID(idempotency_key)
     except ValueError as error:
@@ -217,36 +254,49 @@ async def readyz() -> JSONResponse:
 @app.post("/v1/realtime/calls", status_code=201, tags=["Realtime"])
 async def create_realtime_call(
     request: Request,
-    x_installation_id: str = Header(alias="X-Installation-Id"),
+    authorization: str = Header(alias="Authorization"),
     idempotency_key: str = Header(alias="Idempotency-Key"),
+    x_voice_reservation_id: str = Header(alias="X-Voice-Reservation-Id"),
     x_mission_session_id: str | None = Header(
         default=None,
         alias="X-Mission-Session-Id",
     ),
-    authorization: str | None = Header(default=None, alias="Authorization"),
 ) -> Response:
-    validate_headers(x_installation_id, idempotency_key)
+    validate_idempotency_key(idempotency_key)
+    account = await request.app.state.account_service.authenticate(authorization)
+    try:
+        reservation_id = UUID(x_voice_reservation_id)
+    except ValueError as error:
+        raise RealtimeError(
+            code="invalid_voice_reservation_id",
+            title="Invalid voice reservation",
+            status=400,
+            detail="The voice reservation identifier must be a UUID.",
+        ) from error
+    reservation = await request.app.state.market_service.validate_voice_reservation(
+        account,
+        reservation_id,
+    )
     mission_session_id: UUID | None = None
-    if x_mission_session_id is not None or authorization is not None:
-        if x_mission_session_id is None or authorization is None:
-            raise RealtimeError(
-                code="incomplete_mission_link",
-                title="Invalid mission link",
-                status=400,
-                detail="Mission session and bearer headers must be provided together.",
-            )
-        scheme, separator, token = authorization.partition(" ")
-        if not separator or scheme.casefold() != "bearer" or not token:
-            raise RealtimeError(
-                code="invalid_mission_token",
-                title="Unauthorized",
-                status=401,
-                detail="A valid mission-session bearer token is required.",
-            )
+    if x_mission_session_id is not None:
         mission_session_id = parse_session_id(x_mission_session_id)
-        await request.app.state.mission_service.authenticate(
-            token,
+        await request.app.state.mission_service.authorize(
+            account.user_id,
             mission_session_id,
+        )
+        if reservation["purpose"] != "mission":
+            raise RealtimeError(
+                code="reservation_purpose_mismatch",
+                title="Invalid voice reservation",
+                status=409,
+                detail="A mission call requires a mission allowance reservation.",
+            )
+    elif reservation["purpose"] != "diagnostic":
+        raise RealtimeError(
+            code="reservation_purpose_mismatch",
+            title="Invalid voice reservation",
+            status=409,
+            detail="A standalone call requires a diagnostic allowance reservation.",
         )
     content_type = request.headers.get("content-type", "").split(";", maxsplit=1)[0]
     if content_type != "application/sdp":
@@ -293,9 +343,12 @@ async def create_realtime_call(
         ) from error
     answer = await request.app.state.realtime_service.create_call(
         sdp_offer,
-        x_installation_id,
+        str(account.user_id),
         idempotency_key,
         mission_mode=mission_session_id is not None,
+        diagnostic_mode=mission_session_id is None,
+        account_id=account.user_id,
+        usage_reservation_id=reservation_id,
     )
     if mission_session_id is not None:
         try:
@@ -337,8 +390,10 @@ async def create_realtime_call(
 )
 async def get_realtime_call(request: Request, session_id: str) -> VoiceSessionMetadata:
     parsed_id = parse_session_id(session_id)
+    authorization = request.headers.get("Authorization", "")
+    account = await request.app.state.account_service.authenticate(authorization)
     record = await request.app.state.realtime_service.get_call(parsed_id)
-    if record is None:
+    if record is None or record.account_id != account.user_id:
         raise RealtimeError(
             code="session_not_found",
             title="Session not found",
@@ -363,9 +418,11 @@ async def get_realtime_call(request: Request, session_id: str) -> VoiceSessionMe
 async def delete_realtime_call(
     request: Request,
     session_id: str,
+    authorization: str = Header(alias="Authorization"),
     x_termination_reason: str | None = Header(default=None, alias="X-Termination-Reason"),
 ) -> Response:
     parsed_id = parse_session_id(session_id)
+    account = await request.app.state.account_service.authenticate(authorization)
     reason = x_termination_reason or "user_finished"
     if reason not in TERMINATION_REASONS:
         raise RealtimeError(
@@ -374,7 +431,16 @@ async def delete_realtime_call(
             status=400,
             detail="The termination reason is not supported.",
         )
-    await request.app.state.realtime_service.delete_call(parsed_id, reason)
+    record = await request.app.state.realtime_service.get_call(parsed_id)
+    if record is not None and record.account_id != account.user_id:
+        raise RealtimeError(
+            code="session_not_found",
+            title="Session not found",
+            status=404,
+            detail="No realtime session exists with this identifier.",
+        )
+    if record is not None:
+        await request.app.state.realtime_service.delete_call(parsed_id, reason)
     return Response(status_code=204)
 
 

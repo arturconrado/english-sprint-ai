@@ -1,0 +1,19 @@
+{
+  "id": "21817929-18db-4f7f-949b-d9fd4a87f8af",
+  "slug": "international-meeting",
+  "version": 1,
+  "title": "International Meeting",
+  "description": "Give a concise update and surface a risk in a global team meeting.",
+  "scenario": "You are giving a weekly update to colleagues in three countries.",
+  "initial_question": "Give a short project update including progress, next step and one risk.",
+  "transfer_question": "How would you ask the team for help with that risk?",
+  "target_skills": ["communication.status_update", "vocabulary.risk", "communication.request"],
+  "expected_duration_minutes": 10,
+  "difficulty": "intermediate",
+  "language_policy": "Tutor speaks concise English and accepts English learner responses.",
+  "correction_policy": "Select one primary and at most one distinct secondary correction.",
+  "maximum_attempts": 3,
+  "maximum_corrections": 2,
+  "completion_rules": "First attempt, retry, transfer, evidence, summary and review.",
+  "prompt_context": "Keep the update brief, structured and action-oriented."
+}

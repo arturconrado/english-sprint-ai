@@ -12,6 +12,7 @@ from opentelemetry import trace
 from english_sprint_api.config import Settings
 from english_sprint_api.realtime.errors import ProviderError, RealtimeError
 from english_sprint_api.realtime.models import (
+    AllowanceSettlementObserver,
     CallAnswer,
     ModelRegistry,
     RealtimeProvider,
@@ -38,6 +39,7 @@ class SessionFactory:
         store: RealtimeStore,
         usage_observer: UsageObserver | None = None,
         sideband_event_observer: SidebandEventObserver | None = None,
+        allowance_settlement_observer: AllowanceSettlementObserver | None = None,
     ) -> None:
         self._settings = settings
         self._provider = provider
@@ -46,6 +48,7 @@ class SessionFactory:
         self._store = store
         self._usage_observer = usage_observer or TelemetryUsageObserver()
         self._sideband_event_observer = sideband_event_observer
+        self._allowance_settlement_observer = allowance_settlement_observer
         self._sidebands: dict[UUID, SidebandConnection] = {}
         self._tasks: dict[UUID, asyncio.Task[None]] = {}
 
@@ -81,6 +84,9 @@ class SessionFactory:
         installation_id: str,
         idempotency_key: str,
         mission_mode: bool = False,
+        diagnostic_mode: bool = False,
+        account_id: UUID | None = None,
+        usage_reservation_id: UUID | None = None,
     ) -> CallAnswer:
         if not self._settings.realtime_enabled:
             raise RealtimeError(
@@ -142,12 +148,17 @@ class SessionFactory:
                     detail="This installation already has an active realtime call.",
                 )
 
-            config = self._model_registry.session_config(mission_mode)
+            config = self._model_registry.session_config(
+                mission_mode=mission_mode,
+                diagnostic_mode=diagnostic_mode,
+            )
             await self._repository.create(
                 session_id,
                 installation_hash,
                 self._settings.realtime_provider,
                 config.model,
+                account_id,
+                usage_reservation_id,
             )
             try:
                 with tracer.start_as_current_span(
@@ -211,6 +222,7 @@ class SessionFactory:
                     await self._provider.hangup(call_id)
             with suppress(Exception):
                 await self._repository.set_failed(session_id)
+            await self._settle_allowance(session_id)
             if claimed_active:
                 await self._store.release_active(installation_hash, session_id)
             raise
@@ -220,6 +232,7 @@ class SessionFactory:
                     await self._provider.hangup(call_id)
             with suppress(Exception):
                 await self._repository.set_failed(session_id)
+            await self._settle_allowance(session_id)
             if claimed_active:
                 await self._store.release_active(installation_hash, session_id)
             logger.exception("Unexpected realtime call creation failure")
@@ -342,6 +355,7 @@ class SessionFactory:
             await self._store.release_active(record.installation_hash, session_id)
         if record is not None and record.status not in {"ended", "failed", "expired"}:
             await self._repository.end(session_id, reason)
+            await self._settle_allowance(session_id)
             observer = self._usage_observer
             if isinstance(observer, TelemetryUsageObserver):
                 observer.sessions_ended.add(1, {"reason": reason})
@@ -371,9 +385,24 @@ class SessionFactory:
                     "server_shutdown",
                     status="expired",
                 )
+                await self._settle_allowance(record.session_id)
                 observer = self._usage_observer
                 if isinstance(observer, TelemetryUsageObserver):
                     observer.orphans.add(1)
+
+    async def _settle_allowance(self, session_id: UUID) -> None:
+        observer = self._allowance_settlement_observer
+        if observer is None:
+            return
+        record = await self._repository.get(session_id)
+        if record is None or record.account_id is None or record.usage_reservation_id is None:
+            return
+        with suppress(Exception):
+            await observer.settle_voice_usage(
+                record.account_id,
+                record.usage_reservation_id,
+                record.duration_seconds or 0,
+            )
 
     async def shutdown(self) -> None:
         session_ids = list(self._tasks)

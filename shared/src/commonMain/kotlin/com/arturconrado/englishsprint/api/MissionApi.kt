@@ -45,24 +45,22 @@ interface MissionApi {
 
     suspend fun createSession(
         missionId: String,
-        installationId: String,
+        firebaseIdToken: String,
         idempotencyKey: String,
-        processingConsent: Boolean,
-        contentRetentionConsent: Boolean,
     ): CreatedMissionSession
 
-    suspend fun getSession(sessionId: String, token: String): MissionSession
+    suspend fun getSession(sessionId: String, firebaseIdToken: String): MissionSession
 
     suspend fun createAttempt(
         sessionId: String,
-        token: String,
+        firebaseIdToken: String,
         idempotencyKey: String,
         attempt: MissionAttempt,
     ): AttemptReceipt
 
     suspend fun sendCommand(
         sessionId: String,
-        token: String,
+        firebaseIdToken: String,
         idempotencyKey: String,
         command: MissionCommand,
         stateVersion: Long,
@@ -70,22 +68,28 @@ interface MissionApi {
 
     suspend fun cancel(
         sessionId: String,
-        token: String,
+        firebaseIdToken: String,
         idempotencyKey: String,
     ): MissionSession
 
     suspend fun complete(
         sessionId: String,
-        token: String,
+        firebaseIdToken: String,
         idempotencyKey: String,
         stateVersion: Long,
     ): MissionSession
 
-    suspend fun getSummary(sessionId: String, token: String): MissionSummary
+    suspend fun getSummary(sessionId: String, firebaseIdToken: String): MissionSummary
 
-    suspend fun listSkills(token: String): List<UserSkill>
+    suspend fun listSkills(firebaseIdToken: String): List<UserSkill>
 
-    suspend fun listDueReviews(token: String): List<DueReview>
+    suspend fun listDueReviews(firebaseIdToken: String): List<DueReview>
+
+    suspend fun completeReview(
+        reviewId: String,
+        firebaseIdToken: String,
+        idempotencyKey: String,
+    )
 }
 
 class KtorMissionApi(
@@ -100,43 +104,32 @@ class KtorMissionApi(
 
     override suspend fun createSession(
         missionId: String,
-        installationId: String,
+        firebaseIdToken: String,
         idempotencyKey: String,
-        processingConsent: Boolean,
-        contentRetentionConsent: Boolean,
     ): CreatedMissionSession {
         val response = client.post("$baseUrl/v1/mission-sessions") {
             contentType(ContentType.Application.Json)
-            header("X-Installation-Id", installationId)
+            bearer(firebaseIdToken)
             header("Idempotency-Key", idempotencyKey)
-            setBody(
-                CreateMissionSessionRequest(
-                    missionId = missionId,
-                    processingConsent = processingConsent,
-                    contentRetentionConsent = contentRetentionConsent,
-                ),
-            )
+            setBody(CreateMissionSessionRequest(missionId = missionId))
         }.checked()
-        val token = requireNotNull(response.headers["X-Mission-Session-Token"]) {
-            "Mission creation response omitted its one-time bearer token"
-        }
-        return CreatedMissionSession(response.body<WireMissionSession>().domain(), token)
+        return CreatedMissionSession(response.body<WireMissionSession>().domain())
     }
 
-    override suspend fun getSession(sessionId: String, token: String): MissionSession =
+    override suspend fun getSession(sessionId: String, firebaseIdToken: String): MissionSession =
         client.get("$baseUrl/v1/mission-sessions/$sessionId") {
-            bearer(token)
+            bearer(firebaseIdToken)
         }.checked().body<WireMissionSession>().domain()
 
     override suspend fun createAttempt(
         sessionId: String,
-        token: String,
+        firebaseIdToken: String,
         idempotencyKey: String,
         attempt: MissionAttempt,
     ): AttemptReceipt {
         val response = client.post("$baseUrl/v1/mission-sessions/$sessionId/attempts") {
             contentType(ContentType.Application.Json)
-            bearer(token)
+            bearer(firebaseIdToken)
             header("Idempotency-Key", idempotencyKey)
             setBody(
                 CreateAttemptRequest(
@@ -155,14 +148,14 @@ class KtorMissionApi(
 
     override suspend fun sendCommand(
         sessionId: String,
-        token: String,
+        firebaseIdToken: String,
         idempotencyKey: String,
         command: MissionCommand,
         stateVersion: Long,
     ): MissionSession {
         val response = client.post("$baseUrl/v1/mission-sessions/$sessionId/commands") {
             contentType(ContentType.Application.Json)
-            bearer(token)
+            bearer(firebaseIdToken)
             header("Idempotency-Key", idempotencyKey)
             setBody(
                 MissionCommandRequest(
@@ -176,41 +169,55 @@ class KtorMissionApi(
 
     override suspend fun cancel(
         sessionId: String,
-        token: String,
+        firebaseIdToken: String,
         idempotencyKey: String,
     ): MissionSession =
         client.post("$baseUrl/v1/mission-sessions/$sessionId/cancel") {
-            bearer(token)
+            bearer(firebaseIdToken)
             header("Idempotency-Key", idempotencyKey)
         }.checked().body<WireMissionSession>().domain()
 
     override suspend fun complete(
         sessionId: String,
-        token: String,
+        firebaseIdToken: String,
         idempotencyKey: String,
         stateVersion: Long,
     ): MissionSession =
         client.post("$baseUrl/v1/mission-sessions/$sessionId/complete") {
             contentType(ContentType.Application.Json)
-            bearer(token)
+            bearer(firebaseIdToken)
             header("Idempotency-Key", idempotencyKey)
             setBody(StateVersionRequest(stateVersion.toInt()))
         }.checked().body<WireMissionSession>().domain()
 
-    override suspend fun getSummary(sessionId: String, token: String): MissionSummary =
+    override suspend fun getSummary(
+        sessionId: String,
+        firebaseIdToken: String,
+    ): MissionSummary =
         client.get("$baseUrl/v1/mission-sessions/$sessionId/summary") {
-            bearer(token)
+            bearer(firebaseIdToken)
         }.checked().body<WireMissionSummary>().domain()
 
-    override suspend fun listSkills(token: String): List<UserSkill> =
+    override suspend fun listSkills(firebaseIdToken: String): List<UserSkill> =
         client.get("$baseUrl/v1/skills") {
-            bearer(token)
+            bearer(firebaseIdToken)
         }.checked().body<List<UserSkillState>>().map { it.domain() }
 
-    override suspend fun listDueReviews(token: String): List<DueReview> =
+    override suspend fun listDueReviews(firebaseIdToken: String): List<DueReview> =
         client.get("$baseUrl/v1/reviews/due") {
-            bearer(token)
+            bearer(firebaseIdToken)
         }.checked().body<List<WireReviewItem>>().map { it.domain() }
+
+    override suspend fun completeReview(
+        reviewId: String,
+        firebaseIdToken: String,
+        idempotencyKey: String,
+    ) {
+        client.post("$baseUrl/v1/reviews/$reviewId/complete") {
+            bearer(firebaseIdToken)
+            header("Idempotency-Key", idempotencyKey)
+        }.checked()
+    }
 
     private fun io.ktor.client.request.HttpRequestBuilder.bearer(token: String) {
         header("Authorization", "Bearer $token")

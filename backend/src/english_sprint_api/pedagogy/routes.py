@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hmac
-import re
 from typing import Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Request, Response
 from fastapi.responses import JSONResponse
 
+from english_sprint_api.auth.repository import UserAccount
+from english_sprint_api.auth.service import AccountService
 from english_sprint_api.pedagogy.generated_state import MissionEvent
 from english_sprint_api.pedagogy.missions import MissionDefinition
 from english_sprint_api.pedagogy.orchestration import MissionCommand
@@ -24,6 +25,7 @@ from generated.models import (
     MissionCommandRequest,
     MissionSession,
     MissionSummary,
+    ReviewCompletion,
     ReviewItem,
     StateVersionRequest,
     UserSkillState,
@@ -33,12 +35,16 @@ from generated.models import (
 )
 
 router = APIRouter()
-INSTALLATION_ID_PATTERN = re.compile(r"^[A-Za-z0-9._-]{16,128}$")
 
 
 def service(request: Request) -> MissionService:
     value: MissionService = request.app.state.mission_service
     return value
+
+
+async def current_account(request: Request, authorization: str) -> UserAccount:
+    account_service: AccountService = request.app.state.account_service
+    return await account_service.authenticate(authorization)
 
 
 def parse_uuid(value: str, label: str) -> UUID:
@@ -57,14 +63,14 @@ def validate_idempotency_key(value: str) -> None:
     parse_uuid(value, "idempotency_key")
 
 
-def bearer_token(authorization: str) -> str:
+def service_bearer_token(authorization: str) -> str:
     scheme, separator, token = authorization.partition(" ")
     if not separator or scheme.casefold() != "bearer" or not token:
         raise RealtimeError(
-            code="invalid_mission_token",
+            code="invalid_internal_token",
             title="Unauthorized",
             status=401,
-            detail="A mission-session bearer token is required.",
+            detail="A service bearer token is required.",
         )
     return token
 
@@ -117,7 +123,7 @@ async def internal_authorized(request: Request, authorization: str) -> None:
             status=503,
             detail="Internal pedagogical commands are disabled.",
         )
-    provided = bearer_token(authorization)
+    provided = service_bearer_token(authorization)
     if not hmac.compare_digest(configured.get_secret_value(), provided):
         raise RealtimeError(
             code="invalid_internal_token",
@@ -141,27 +147,22 @@ async def get_mission(request: Request, mission_id: str) -> Mission:
 async def create_mission_session(
     request: Request,
     payload: CreateMissionSessionRequest,
-    x_installation_id: str = Header(alias="X-Installation-Id"),
+    authorization: str = Header(alias="Authorization"),
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> JSONResponse:
-    if not INSTALLATION_ID_PATTERN.fullmatch(x_installation_id):
-        raise RealtimeError(
-            code="invalid_installation_id",
-            title="Invalid installation identifier",
-            status=400,
-            detail="The installation identifier has an invalid format.",
-        )
     validate_idempotency_key(idempotency_key)
+    account = await current_account(request, authorization)
+    market = request.app.state.market_service
+    consents = await market.repository.current_consents(account.user_id)
     created = await service(request).create_session(
         mission_id=payload.mission_id,
-        installation_id=x_installation_id,
+        user_id=account.user_id,
         idempotency_key=idempotency_key,
-        processing_consent=payload.processing_consent,
-        content_retention_consent=payload.content_retention_consent,
+        processing_consent=bool(consents.get("pedagogical_processing")),
+        content_retention_consent=bool(consents.get("content_retention")),
     )
     return JSONResponse(
         status_code=201,
-        headers={"X-Mission-Session-Token": created.token},
         content=model_json(session_model(created.record)),
     )
 
@@ -176,9 +177,10 @@ async def get_mission_session(
     session_id: str,
     authorization: str = Header(alias="Authorization"),
 ) -> MissionSession:
+    account = await current_account(request, authorization)
     record = await service(request).get_session(
         parse_uuid(session_id, "mission_session"),
-        bearer_token(authorization),
+        account.user_id,
     )
     return session_model(record)
 
@@ -197,6 +199,7 @@ async def create_mission_attempt(
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> AttemptReceipt:
     validate_idempotency_key(idempotency_key)
+    account = await current_account(request, authorization)
     parsed_session_id = parse_uuid(session_id, "mission_session")
     operation_scope = f"attempt:{parsed_session_id}"
     cached = await service(request).store.get_operation(operation_scope, idempotency_key)
@@ -204,7 +207,7 @@ async def create_mission_attempt(
         return AttemptReceipt.model_validate(cached)
     result = await service(request).create_attempt(
         parsed_session_id,
-        bearer_token(authorization),
+        account.user_id,
         AttemptInput(
             client_attempt_id=payload.client_attempt_id,
             state_version=payload.state_version,
@@ -242,6 +245,7 @@ async def send_mission_command(
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> MissionSession:
     validate_idempotency_key(idempotency_key)
+    account = await current_account(request, authorization)
     parsed_session_id = parse_uuid(session_id, "mission_session")
     operation_scope = f"command:{parsed_session_id}"
     cached = await service(request).store.get_operation(operation_scope, idempotency_key)
@@ -249,7 +253,7 @@ async def send_mission_command(
         return MissionSession.model_validate(cached)
     record = await service(request).command(
         parsed_session_id,
-        bearer_token(authorization),
+        account.user_id,
         MissionCommand(payload.command.value),
         payload.state_version,
         UUID(idempotency_key),
@@ -275,12 +279,12 @@ async def cancel_mission_session(
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> MissionSession:
     validate_idempotency_key(idempotency_key)
+    account = await current_account(request, authorization)
     parsed_session_id = parse_uuid(session_id, "mission_session")
-    token = bearer_token(authorization)
-    current = await service(request).get_session(parsed_session_id, token)
+    current = await service(request).get_session(parsed_session_id, account.user_id)
     record = await service(request).cancel(
         parsed_session_id,
-        token,
+        account.user_id,
         current.state_version,
         UUID(idempotency_key),
     )
@@ -300,9 +304,10 @@ async def complete_mission_session(
     idempotency_key: str = Header(alias="Idempotency-Key"),
 ) -> MissionSession:
     validate_idempotency_key(idempotency_key)
+    account = await current_account(request, authorization)
     record = await service(request).complete(
         parse_uuid(session_id, "mission_session"),
-        bearer_token(authorization),
+        account.user_id,
         payload.state_version,
         UUID(idempotency_key),
     )
@@ -319,9 +324,10 @@ async def get_mission_summary(
     session_id: str,
     authorization: str = Header(alias="Authorization"),
 ) -> MissionSummary:
+    account = await current_account(request, authorization)
     result = await service(request).summary(
         parse_uuid(session_id, "mission_session"),
-        bearer_token(authorization),
+        account.user_id,
     )
     return MissionSummary.model_validate(result)
 
@@ -331,9 +337,10 @@ async def list_skills(
     request: Request,
     authorization: str = Header(alias="Authorization"),
 ) -> list[UserSkillState]:
+    account = await current_account(request, authorization)
     return [
         UserSkillState.model_validate(item)
-        for item in await service(request).skills(bearer_token(authorization))
+        for item in await service(request).skills(account.user_id)
     ]
 
 
@@ -342,10 +349,32 @@ async def list_due_reviews(
     request: Request,
     authorization: str = Header(alias="Authorization"),
 ) -> list[ReviewItem]:
+    account = await current_account(request, authorization)
     return [
         ReviewItem.model_validate(item)
-        for item in await service(request).due_reviews(bearer_token(authorization))
+        for item in await service(request).due_reviews(account.user_id)
     ]
+
+
+@router.post(
+    "/v1/reviews/{review_id}/complete",
+    response_model=ReviewCompletion,
+    tags=["Pedagogy"],
+)
+async def complete_review(
+    request: Request,
+    review_id: str,
+    authorization: str = Header(alias="Authorization"),
+    idempotency_key: str = Header(alias="Idempotency-Key"),
+) -> ReviewCompletion:
+    validate_idempotency_key(idempotency_key)
+    account = await current_account(request, authorization)
+    result = await service(request).complete_review(
+        account.user_id,
+        parse_uuid(review_id, "review"),
+        UUID(idempotency_key),
+    )
+    return ReviewCompletion.model_validate(result)
 
 
 @router.post(

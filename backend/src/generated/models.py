@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from datetime import date
 from enum import StrEnum
 from typing import Literal
 from uuid import UUID
@@ -150,8 +151,6 @@ class CreateMissionSessionRequest(BaseModel):
         extra="forbid",
     )
     mission_id: UUID
-    processing_consent: bool
-    content_retention_consent: bool
 
 
 class MissionSession(BaseModel):
@@ -306,6 +305,15 @@ class ReviewItem(BaseModel):
     review_type: ReviewType
     scheduled_at: AwareDatetime
     status: Status2
+    sequence_number: conint(ge=1, le=3)
+
+
+class ReviewCompletion(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    completed_review_id: UUID
+    next_review: ReviewItem | None = None
 
 
 class MissionSummary(BaseModel):
@@ -322,3 +330,338 @@ class MissionSummary(BaseModel):
     next_review_at: AwareDatetime | None = None
     content_retained: bool
     evidence_available: bool
+
+
+class Status3(StrEnum):
+    active = "active"
+    deleting = "deleting"
+    deleted = "deleted"
+    disabled = "disabled"
+
+
+class AuthProvider(StrEnum):
+    google = "google"
+
+
+class CurrentUser(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    user_id: UUID
+    status: Status3
+    auth_provider: AuthProvider
+    onboarding_completed: bool | None = False
+    created_at: AwareDatetime
+
+
+class ConsentSettings(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    policy_version: constr(min_length=1, max_length=32)
+    pedagogical_processing: bool
+    analytics: bool
+    content_retention: bool
+    notifications: bool
+
+
+class ProfessionalGoal(StrEnum):
+    international_interviews = "international_interviews"
+    global_team_communication = "global_team_communication"
+    technical_presentations = "technical_presentations"
+
+
+class EnglishContext(StrEnum):
+    rarely = "rarely"
+    monthly = "monthly"
+    weekly = "weekly"
+    daily = "daily"
+
+
+class OnboardingProfile(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    professional_goal: ProfessionalGoal
+    english_context: EnglishContext
+    timezone: constr(min_length=1, max_length=64)
+    completed: bool | None = None
+
+
+class Status4(StrEnum):
+    ready = "ready"
+    active = "active"
+    completed = "completed"
+    failed = "failed"
+    expired = "expired"
+
+
+class Diagnostic(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    diagnostic_id: UUID
+    status: Status4
+    promotional_seconds: Literal[600]
+    used_seconds: conint(ge=0, le=600)
+    created_at: AwareDatetime
+    completed_at: AwareDatetime | None = None
+
+
+class Status5(StrEnum):
+    locked = "locked"
+    available = "available"
+    completed = "completed"
+    skipped = "skipped"
+
+
+class SprintDay(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    day: conint(ge=1, le=7)
+    mission_id: UUID
+    title: str
+    status: Status5
+    scheduled_for: date | None = None
+
+
+class Status6(StrEnum):
+    active = "active"
+    completed = "completed"
+    cancelled = "cancelled"
+
+
+class SprintPlan(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    sprint_id: UUID
+    status: Status6
+    starts_on: date
+    ends_on: date
+    days: list[SprintDay] = Field(..., max_length=7, min_length=7)
+
+
+class Progress(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    completed_missions: conint(ge=0)
+    completed_reviews: conint(ge=0)
+    practiced_skills: conint(ge=0)
+    current_streak_days: conint(ge=0, le=7)
+    voice_seconds_remaining: conint(ge=0)
+    next_review_at: AwareDatetime | None = None
+
+
+class NotificationPreferences(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    enabled: bool
+    daily_reminder: bool
+    review_reminder: bool
+    timezone: constr(min_length=1, max_length=64)
+    reminder_hour_local: conint(ge=7, le=22) | None = 19
+
+
+class Entitlement(StrEnum):
+    free_beta = "free_beta"
+    paid_beta = "paid_beta"
+    none = "none"
+
+
+class SubscriptionStatus(StrEnum):
+    inactive = "inactive"
+    active = "active"
+    grace_period = "grace_period"
+    billing_issue = "billing_issue"
+    expired = "expired"
+
+
+class AccessMode(StrEnum):
+    free_beta = "free_beta"
+    paid_subscription = "paid_subscription"
+    unavailable = "unavailable"
+
+
+class BillingStatus(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    entitlement: Entitlement = Field(
+        ..., description="Effective entitlement; payment is not implied for free-beta users."
+    )
+    subscription_status: SubscriptionStatus
+    access_mode: AccessMode = Field(
+        ..., description="Server-authoritative product access granted to this account."
+    )
+    cycle_allowance_seconds: Literal[7200]
+    remaining_seconds: conint(ge=0, le=86400)
+    free_beta_seconds_remaining: conint(ge=0, le=86400) = Field(
+        ..., description="Remaining lifetime allowance for an enrolled free-beta account."
+    )
+    promotional_seconds_remaining: conint(ge=0, le=600)
+    period_ends_at: AwareDatetime | None = None
+
+
+class Purpose(StrEnum):
+    diagnostic = "diagnostic"
+    mission = "mission"
+
+
+class ReserveVoiceUsageRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    requested_seconds: conint(ge=60, le=1800)
+    purpose: Purpose
+
+
+class Source(StrEnum):
+    promotional = "promotional"
+    subscription = "subscription"
+    free_beta = "free_beta"
+
+
+class VoiceUsageReservation(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    reservation_id: UUID
+    reserved_seconds: conint(ge=1)
+    source: Source
+    expires_at: AwareDatetime
+    remaining_seconds: conint(ge=0)
+
+
+class RevenueCatWebhookEvent(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    id: constr(min_length=1)
+    type: constr(min_length=1)
+    app_user_id: constr(min_length=1)
+    event_timestamp_ms: conint(ge=0)
+    expiration_at_ms: int | None = None
+    entitlement_ids: list[str] | None = None
+    environment: str | None = None
+
+
+class RequestType(StrEnum):
+    export = "export"
+    deletion = "deletion"
+
+
+class Status7(StrEnum):
+    requested = "requested"
+    processing = "processing"
+    completed = "completed"
+    failed = "failed"
+    cancelled = "cancelled"
+
+
+class DataRightRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    request_id: UUID
+    request_type: RequestType
+    status: Status7
+    requested_at: AwareDatetime
+    completed_at: AwareDatetime | None = None
+
+
+class Account(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    user_id: UUID
+    status: str
+    created_at: AwareDatetime
+
+
+class AccountExport(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    generated_at: AwareDatetime
+    account: Account
+    consents: dict[str, bool]
+    onboarding: OnboardingProfile | None
+    diagnostic: Diagnostic | None
+    sprint: SprintPlan | None
+    progress: Progress
+    billing: BillingStatus
+
+
+class Category(StrEnum):
+    access = "access"
+    billing = "billing"
+    voice = "voice"
+    privacy = "privacy"
+    learning = "learning"
+    other = "other"
+
+
+class CreateSupportRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    category: Category
+    description: constr(min_length=10, max_length=1000)
+
+
+class Status8(StrEnum):
+    open = "open"
+    in_progress = "in_progress"
+    resolved = "resolved"
+    closed = "closed"
+
+
+class SupportRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    request_id: UUID
+    category: Category
+    status: Status8
+    created_at: AwareDatetime
+
+
+class InternalSupportItem(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    request_id: UUID
+    user_id: UUID
+    category: Category
+    status: Status8
+    created_at: AwareDatetime
+    updated_at: AwareDatetime
+
+
+class InternalSupportDetail(InternalSupportItem):
+    description: constr(min_length=10, max_length=1000)
+
+
+class Status10(StrEnum):
+    in_progress = "in_progress"
+    resolved = "resolved"
+    closed = "closed"
+
+
+class UpdateSupportRequest(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    status: Status10
+
+
+class RevenueCatWebhook(BaseModel):
+    model_config = ConfigDict(
+        extra="forbid",
+    )
+    api_version: str
+    event: RevenueCatWebhookEvent

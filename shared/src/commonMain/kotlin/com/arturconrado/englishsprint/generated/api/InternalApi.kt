@@ -24,8 +24,11 @@
 package com.arturconrado.englishsprint.generated.api
 
 import com.arturconrado.englishsprint.generated.dto.InternalAdvanceRequest
+import com.arturconrado.englishsprint.generated.dto.InternalSupportDetail
+import com.arturconrado.englishsprint.generated.dto.InternalSupportItem
 import com.arturconrado.englishsprint.generated.dto.MissionSession
 import com.arturconrado.englishsprint.generated.dto.ProblemDetails
+import com.arturconrado.englishsprint.generated.dto.UpdateSupportRequest
 
 import com.arturconrado.englishsprint.generated.infrastructure.*
 import io.ktor.client.HttpClient
@@ -123,6 +126,103 @@ open class InternalApi : ApiClient {
 
 
     /**
+     * Read one support request
+     * Decrypts the bounded support description only for an authenticated operator.
+     * @param requestId Internal support request UUID.
+     * @return InternalSupportDetail
+     */
+    @Suppress("UNCHECKED_CAST")
+    open suspend fun getSupportRequestInternal(requestId: kotlin.String): HttpResponse<InternalSupportDetail> {
+
+        val localVariableAuthNames = listOf<String>("internalBearer")
+
+        val localVariableBody =
+            io.ktor.client.utils.EmptyContent
+
+        val localVariableQuery = mutableMapOf<String, List<String>>()
+        val localVariableHeaders = mutableMapOf<String, String>()
+
+        val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/internal/support/requests/{request_id}".replace("{" + "request_id" + "}", "$requestId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+        )
+
+        return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+        ).wrap()
+    }
+
+
+
+    /**
+     * enum for parameter status
+     */
+    @Serializable
+    enum class StatusListSupportRequestsInternal(val value: kotlin.String) {
+
+        @SerialName(value = "open")
+        `open`("open"),
+
+        @SerialName(value = "in_progress")
+        in_progress("in_progress"),
+
+        @SerialName(value = "resolved")
+        resolved("resolved"),
+
+        @SerialName(value = "closed")
+        closed("closed")
+
+    }
+
+    /**
+     * List the operator support queue
+     * Returns sanitized support metadata to an authenticated private operator.
+     * @param status Optional support status filter. (optional)
+     * @return kotlin.collections.List<InternalSupportItem>
+     */
+    @Suppress("UNCHECKED_CAST")
+    open suspend fun listSupportRequestsInternal(status: StatusListSupportRequestsInternal? = null): HttpResponse<kotlin.collections.List<InternalSupportItem>> {
+
+        val localVariableAuthNames = listOf<String>("internalBearer")
+
+        val localVariableBody =
+            io.ktor.client.utils.EmptyContent
+
+        val localVariableQuery = mutableMapOf<String, List<String>>()
+        status?.apply { localVariableQuery["status"] = listOf("${ status.value }") }
+        val localVariableHeaders = mutableMapOf<String, String>()
+
+        val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.GET,
+            "/internal/support/requests",
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+        )
+
+        return request(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+        ).wrap<ListSupportRequestsInternalResponse>().map { value }
+    }
+
+    @Serializable(ListSupportRequestsInternalResponse.Companion::class)
+    private class ListSupportRequestsInternalResponse(val value: List<InternalSupportItem>) {
+        companion object : KSerializer<ListSupportRequestsInternalResponse> {
+            private val serializer: KSerializer<List<InternalSupportItem>> = serializer<List<InternalSupportItem>>()
+            override val descriptor = serializer.descriptor
+            override fun serialize(encoder: Encoder, value: ListSupportRequestsInternalResponse) = serializer.serialize(encoder, value.value)
+            override fun deserialize(decoder: Decoder) = ListSupportRequestsInternalResponse(serializer.deserialize(decoder))
+        }
+    }
+
+    /**
      * Compose a bounded mission summary
      * Queues deterministic or bounded-model summary composition.
      * @param sessionId
@@ -152,6 +252,40 @@ open class InternalApi : ApiClient {
             localVariableAuthNames
         ).wrap()
     }
+
+
+    /**
+     * Advance a support request
+     * Changes only the typed operational status; no free-form operator notes are stored.
+     * @param requestId Internal support request UUID.
+     * @param updateSupportRequest
+     * @return InternalSupportItem
+     */
+    @Suppress("UNCHECKED_CAST")
+    open suspend fun updateSupportRequestInternal(requestId: kotlin.String, updateSupportRequest: UpdateSupportRequest): HttpResponse<InternalSupportItem> {
+
+        val localVariableAuthNames = listOf<String>("internalBearer")
+
+        val localVariableBody = updateSupportRequest
+
+        val localVariableQuery = mutableMapOf<String, List<String>>()
+        val localVariableHeaders = mutableMapOf<String, String>()
+
+        val localVariableConfig = RequestConfig<kotlin.Any?>(
+            RequestMethod.POST,
+            "/internal/support/requests/{request_id}".replace("{" + "request_id" + "}", "$requestId"),
+            query = localVariableQuery,
+            headers = localVariableHeaders,
+            requiresAuthentication = true,
+        )
+
+        return jsonRequest(
+            localVariableConfig,
+            localVariableBody,
+            localVariableAuthNames
+        ).wrap()
+    }
+
 
 
 }

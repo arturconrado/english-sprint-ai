@@ -37,6 +37,7 @@ import kotlinx.serialization.encoding.*
  * @param reviewType
  * @param scheduledAt
  * @param status
+ * @param sequenceNumber
  */
 @Serializable
 
@@ -52,7 +53,9 @@ data class ReviewItem (
 
     @SerialName(value = "scheduled_at") @Required val scheduledAt: kotlin.time.Instant,
 
-    @SerialName(value = "status") @Required val status: ReviewItem.Status
+    @SerialName(value = "status") @Required val status: ReviewItem.Status,
+
+    @SerialName(value = "sequence_number") @Required val sequenceNumber: kotlin.Int
 
 ) {
 

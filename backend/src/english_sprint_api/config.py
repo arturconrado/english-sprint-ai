@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     otel_enabled: bool = True
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"
     log_level: str = "INFO"
+    auth_enabled: bool = False
+    firebase_project_id: str | None = None
+    firebase_check_revoked: bool = True
+    billing_enabled: bool = False
+    free_beta_enabled: bool = False
+    free_beta_allowance_seconds: int = Field(default=7200, ge=600, le=86400)
+    free_beta_max_accounts: int = Field(default=30, ge=1, le=1000)
+    revenuecat_secret_api_key: SecretStr | None = None
+    revenuecat_webhook_secret: SecretStr | None = None
+    revenuecat_entitlement_id: str = "paid_beta"
     realtime_enabled: bool = False
     realtime_provider: Literal["openai"] = "openai"
     openai_api_key: SecretStr | None = None
@@ -50,6 +60,18 @@ class Settings(BaseSettings):
     content_retention_days: int = Field(default=30, ge=1, le=30)
     content_encryption_key: SecretStr | None = None
     content_encryption_key_version: str = "v1"
+
+    @property
+    def auth_configuration_valid(self) -> bool:
+        return not self.auth_enabled or bool(self.firebase_project_id)
+
+    @property
+    def billing_configuration_valid(self) -> bool:
+        return not self.billing_enabled or bool(
+            self.revenuecat_secret_api_key
+            and self.revenuecat_webhook_secret
+            and self.revenuecat_entitlement_id == "paid_beta"
+        )
 
     @property
     def realtime_configuration_valid(self) -> bool:
