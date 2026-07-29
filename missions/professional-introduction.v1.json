@@ -1,0 +1,26 @@
+{
+  "id": "5d52dd33-0a70-4f53-9bb8-c61aa7b602d7",
+  "slug": "professional-introduction",
+  "version": 1,
+  "title": "Professional Introduction",
+  "description": "Introduce your experience clearly to an international colleague.",
+  "scenario": "You are meeting a new international team for the first time.",
+  "initial_question": "Tell me about yourself and your professional experience.",
+  "transfer_question": "How would you introduce yourself to a new international team?",
+  "target_skills": [
+    "professional.introduction",
+    "communication.chronology",
+    "grammar.past_and_present",
+    "vocabulary.experience",
+    "communication.clarity",
+    "communication.closing"
+  ],
+  "expected_duration_minutes": 10,
+  "difficulty": "intermediate",
+  "language_policy": "Tutor speaks concise English and accepts English learner responses.",
+  "correction_policy": "Select one primary and at most one distinct secondary correction.",
+  "maximum_attempts": 3,
+  "maximum_corrections": 2,
+  "completion_rules": "First attempt, retry, transfer, evidence, summary and review.",
+  "prompt_context": "Keep the introduction professional, brief and supportive."
+}

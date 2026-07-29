@@ -20,6 +20,8 @@ class VoiceSessionRepository:
         return SessionRecord(
             session_id=row["id"],
             installation_hash=row["anonymous_installation_hash"],
+            account_id=row.get("account_id"),
+            usage_reservation_id=row.get("usage_reservation_id"),
             provider=row["provider"],
             model=row["model"],
             status=row["status"],
@@ -37,19 +39,24 @@ class VoiceSessionRepository:
         installation_hash: str,
         provider: str,
         model: str,
+        account_id: UUID | None = None,
+        usage_reservation_id: UUID | None = None,
     ) -> None:
         connection = await self._connect()
         try:
             await connection.execute(
                 """
                 INSERT INTO voice_sessions (
-                    id, anonymous_installation_hash, provider, model, status
-                ) VALUES ($1, $2, $3, $4, 'creating')
+                    id, anonymous_installation_hash, provider, model, status,
+                    account_id, usage_reservation_id
+                ) VALUES ($1, $2, $3, $4, 'creating', $5, $6)
                 """,
                 session_id,
                 installation_hash,
                 provider,
                 model,
+                account_id,
+                usage_reservation_id,
             )
         finally:
             await connection.close()

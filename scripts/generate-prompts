@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+PROMPTS = ROOT / "prompts"
+OUTPUT = PROMPTS / "manifest.json"
+
+
+def canonical(value: object) -> bytes:
+    return (
+        json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True) + "\n"
+    ).encode()
+
+
+entries: list[dict[str, object]] = []
+for metadata_path in sorted(PROMPTS.glob("*/metadata.json")):
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    template_path = metadata_path.parent / metadata["template"]
+    template = template_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    source = {"metadata": metadata, "template": template}
+    entries.append(
+        {
+            **metadata,
+            "metadata_path": metadata_path.relative_to(ROOT).as_posix(),
+            "template_path": template_path.relative_to(ROOT).as_posix(),
+            "sha256": hashlib.sha256(canonical(source)).hexdigest(),
+        }
+    )
+
+OUTPUT.write_bytes(canonical({"schema_version": "1.0", "prompts": entries}))

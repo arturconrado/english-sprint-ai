@@ -13,6 +13,8 @@ class SessionConfig:
     vad_threshold: float
     vad_prefix_padding_ms: int
     vad_silence_duration_ms: int
+    create_response: bool = True
+    transcription_model: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +33,8 @@ class CallAnswer:
 class SessionRecord:
     session_id: UUID
     installation_hash: str
+    account_id: UUID | None
+    usage_reservation_id: UUID | None
     provider: str
     model: str
     status: str
@@ -68,8 +72,29 @@ class RealtimeProvider(Protocol):
 
 
 class ModelRegistry(Protocol):
-    def session_config(self) -> SessionConfig: ...
+    def session_config(
+        self,
+        mission_mode: bool = False,
+        diagnostic_mode: bool = False,
+    ) -> SessionConfig: ...
 
 
 class UsageObserver(Protocol):
     def observe(self, session_id: UUID, event: dict[str, object]) -> None: ...
+
+
+class SidebandEventObserver(Protocol):
+    async def observe(
+        self,
+        session_id: UUID,
+        event: dict[str, object],
+    ) -> None: ...
+
+
+class AllowanceSettlementObserver(Protocol):
+    async def settle_voice_usage(
+        self,
+        account_id: UUID,
+        reservation_id: UUID,
+        used_seconds: int,
+    ) -> None: ...

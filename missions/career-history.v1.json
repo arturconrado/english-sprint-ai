@@ -1,0 +1,19 @@
+{
+  "id": "24dffb4a-6c79-4e83-aed3-b47093cc4551",
+  "slug": "career-history",
+  "version": 1,
+  "title": "Career History",
+  "description": "Explain the progression of your career with a clear chronology.",
+  "scenario": "A hiring manager asks how your experience developed over time.",
+  "initial_question": "Walk me through the most important stages of your career.",
+  "transfer_question": "Which career transition prepared you most for your current role?",
+  "target_skills": ["communication.chronology", "grammar.past_and_present", "vocabulary.experience"],
+  "expected_duration_minutes": 10,
+  "difficulty": "intermediate",
+  "language_policy": "Tutor speaks concise English and accepts English learner responses.",
+  "correction_policy": "Select one primary and at most one distinct secondary correction.",
+  "maximum_attempts": 3,
+  "maximum_corrections": 2,
+  "completion_rules": "First attempt, retry, transfer, evidence, summary and review.",
+  "prompt_context": "Keep the chronology concrete, professional and easy to follow."
+}

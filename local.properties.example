@@ -1,0 +1,9 @@
+# Copy to local.properties. Never commit the populated file.
+sdk.dir=/absolute/path/to/Android/sdk
+ENGLISH_SPRINT_API_BASE_URL=https://api.example.com
+FIREBASE_API_KEY=
+FIREBASE_APP_ID=
+FIREBASE_PROJECT_ID=
+FIREBASE_WEB_CLIENT_ID=
+# Optional. Leave blank while FREE_BETA_ENABLED=true on the backend.
+REVENUECAT_PUBLIC_API_KEY=

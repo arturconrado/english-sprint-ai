@@ -1,0 +1,19 @@
+{
+  "id": "d23f893f-f727-40c9-b5aa-24c8802ff7fc",
+  "slug": "architecture-decision",
+  "version": 1,
+  "title": "Architecture Decision",
+  "description": "Defend a technical decision using constraints and tradeoffs.",
+  "scenario": "An international architecture review challenges one of your design choices.",
+  "initial_question": "Explain one architecture decision and the tradeoffs you considered.",
+  "transfer_question": "How would your decision change if reliability mattered more than delivery speed?",
+  "target_skills": ["communication.tradeoffs", "vocabulary.architecture", "communication.clarity"],
+  "expected_duration_minutes": 10,
+  "difficulty": "intermediate",
+  "language_policy": "Tutor speaks concise English and accepts English learner responses.",
+  "correction_policy": "Select one primary and at most one distinct secondary correction.",
+  "maximum_attempts": 3,
+  "maximum_corrections": 2,
+  "completion_rules": "First attempt, retry, transfer, evidence, summary and review.",
+  "prompt_context": "Require a constraint, decision, rejected alternative and consequence."
+}

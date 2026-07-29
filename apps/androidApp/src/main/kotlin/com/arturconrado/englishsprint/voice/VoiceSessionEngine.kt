@@ -2,7 +2,12 @@ package com.arturconrado.englishsprint.voice
 
 import android.content.Context
 import android.os.SystemClock
+import com.arturconrado.englishsprint.api.MissionApi
 import com.arturconrado.englishsprint.api.RealtimeSessionApi
+import com.arturconrado.englishsprint.domain.MissionCommand
+import com.arturconrado.englishsprint.domain.AttemptKind
+import com.arturconrado.englishsprint.domain.HelpLevel
+import com.arturconrado.englishsprint.domain.MissionAttempt
 import com.arturconrado.englishsprint.domain.LocalVoiceCommand
 import com.arturconrado.englishsprint.domain.VoiceSessionCommand
 import com.arturconrado.englishsprint.domain.VoiceSessionEffect
@@ -17,6 +22,7 @@ import com.arturconrado.englishsprint.voice.rtc.RtcEvent
 import com.arturconrado.englishsprint.voice.rtc.RtcSession
 import com.arturconrado.englishsprint.voice.rtc.RtcSessionFactory
 import java.util.UUID
+import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -28,6 +34,7 @@ data class VoiceSessionSnapshot(
     val state: VoiceSessionState = VoiceSessionState.Idle,
     val routeName: String? = null,
     val errorCode: String? = null,
+    val missionState: String? = null,
 )
 
 class VoiceSessionEngine(
@@ -35,7 +42,10 @@ class VoiceSessionEngine(
     private val scope: CoroutineScope,
     private val api: RealtimeSessionApi,
     private val rtcFactory: RtcSessionFactory,
-    private val installationId: String,
+    private val firebaseIdToken: String,
+    private val usageReservationId: String,
+    private val missionApi: MissionApi? = null,
+    private val missionSessionId: String? = null,
     private val onSnapshot: (VoiceSessionSnapshot) -> Unit,
 ) {
     private val mutex = Mutex()
@@ -57,6 +67,10 @@ class VoiceSessionEngine(
     private var routeRecoveryJob: Job? = null
     private val generationGate = SessionGenerationGate()
     private var closed = false
+    private var attemptStartedAt: String? = null
+    private var helpLevel = HelpLevel.NO_HELP
+    private var usedTimeExtension = false
+    private var canonicalMissionState: String? = null
 
     suspend fun start(): Unit = mutex.withLock {
         if (closed || state !in setOf(VoiceSessionState.Idle, VoiceSessionState.Ended)) return
@@ -118,7 +132,35 @@ class VoiceSessionEngine(
             LocalVoiceCommand.Pause -> this.command(VoiceSessionCommand.Pause)
             LocalVoiceCommand.Resume -> this.command(VoiceSessionCommand.Resume)
             LocalVoiceCommand.Finish -> finish("offline_command")
+            LocalVoiceCommand.RepeatPrompt -> sendMissionCommand(MissionCommand.RepeatPrompt)
+            LocalVoiceCommand.NeedMoreTime -> {
+                sendMissionCommand(MissionCommand.NeedMoreTime)
+                usedTimeExtension = true
+            }
+
+            LocalVoiceCommand.RequestHelp -> {
+                sendMissionCommand(MissionCommand.RequestHelp)
+                helpLevel = HelpLevel.FIRST_WORD
+            }
         }
+    }
+
+    private suspend fun sendMissionCommand(command: MissionCommand) {
+        val sessionId = missionSessionId ?: return
+        val api = missionApi ?: return
+        val canonical = api.getSession(
+            sessionId,
+            firebaseIdToken,
+        )
+        val updated = api.sendCommand(
+            sessionId = sessionId,
+            firebaseIdToken = firebaseIdToken,
+            idempotencyKey = UUID.randomUUID().toString(),
+            command = command,
+            stateVersion = canonical.stateVersion,
+        )
+        canonicalMissionState = updated.state
+        publish()
     }
 
     private suspend fun connectRealtime() {
@@ -132,8 +174,10 @@ class VoiceSessionEngine(
             val offer = rtc.createOffer()
             val answer = api.createCall(
                 sdpOffer = offer,
-                installationId = installationId,
+                firebaseIdToken = firebaseIdToken,
+                usageReservationId = usageReservationId,
                 idempotencyKey = UUID.randomUUID().toString(),
+                missionSessionId = missionSessionId,
             )
             backendSessionId = answer.sessionId
             rtc.acceptAnswer(answer.sdpAnswer)
@@ -158,6 +202,7 @@ class VoiceSessionEngine(
 
             RtcEvent.Disconnected -> scheduleReconnect()
             RtcEvent.UserSpeechStarted -> {
+                attemptStartedAt = Clock.System.now().toString()
                 val interruptionStarted = SystemClock.elapsedRealtime()
                 val wasResponding =
                     state == VoiceSessionState.Speaking ||
@@ -171,10 +216,56 @@ class VoiceSessionEngine(
                 }
             }
 
-            RtcEvent.UserSpeechEnded -> transition(VoiceSessionEvent.UserSpeechEnded)
+            RtcEvent.UserSpeechEnded -> {
+                transition(VoiceSessionEvent.UserSpeechEnded)
+                scope.launch { submitAttempt() }
+            }
             RtcEvent.ResponseStarted -> transition(VoiceSessionEvent.ResponseStarted)
-            RtcEvent.ResponseEnded -> transition(VoiceSessionEvent.ResponseEnded)
+            RtcEvent.ResponseEnded -> {
+                transition(VoiceSessionEvent.ResponseEnded)
+                scope.launch { refreshCanonicalMissionState() }
+            }
             is RtcEvent.Failure -> fail(event.code, recoverable = true)
+        }
+    }
+
+    private suspend fun submitAttempt() {
+        val sessionId = missionSessionId ?: return
+        val api = missionApi ?: return
+        runCatching {
+            val canonical = api.getSession(
+                sessionId,
+                firebaseIdToken,
+            )
+            val kind = when (canonical.state) {
+                "FIRST_ATTEMPT_WAITING" -> AttemptKind.FIRST
+                "RETRY_WAITING" -> AttemptKind.RETRY
+                "TRANSFER_WAITING" -> AttemptKind.TRANSFER
+                else -> return
+            }
+            val completedAt = Clock.System.now().toString()
+            api.createAttempt(
+                sessionId = sessionId,
+                firebaseIdToken = firebaseIdToken,
+                idempotencyKey = UUID.randomUUID().toString(),
+                attempt = MissionAttempt(
+                    clientAttemptId = UUID.randomUUID().toString(),
+                    stateVersion = canonical.stateVersion,
+                    kind = kind,
+                    helpLevel = helpLevel,
+                    startedAt = attemptStartedAt ?: completedAt,
+                    completedAt = completedAt,
+                    usedTimeExtension = usedTimeExtension,
+                ),
+            )
+        }.onSuccess { receipt ->
+            canonicalMissionState = receipt.state
+            attemptStartedAt = null
+            helpLevel = HelpLevel.NO_HELP
+            usedTimeExtension = false
+            publish()
+        }.onFailure {
+            fail("attempt_submission_failed", recoverable = true)
         }
     }
 
@@ -202,6 +293,26 @@ class VoiceSessionEngine(
                 fail("network_recovery_exhausted", recoverable = true)
                 finishLocked("network_failure")
             }
+        }
+    }
+
+    private suspend fun refreshCanonicalMissionState() {
+        val sessionId = missionSessionId ?: return
+        val api = missionApi ?: return
+        repeat(3) { attempt ->
+            if (attempt > 0) delay(250)
+            val canonical = runCatching {
+                api.getSession(sessionId, firebaseIdToken)
+            }.getOrNull() ?: return
+            mutex.withLock {
+                if (closed) return
+                canonicalMissionState = canonical.state
+                publish()
+                if (canonical.state == "MISSION_COMPLETED") {
+                    finishCompletedLocked()
+                }
+            }
+            if (canonical.state == "MISSION_COMPLETED") return
         }
     }
 
@@ -252,6 +363,28 @@ class VoiceSessionEngine(
         routeRecoveryJob?.cancel()
         routeRecoveryJob = null
         releaseCall(reason)
+        missionSessionId?.let { sessionId ->
+            runCatching {
+                missionApi?.cancel(
+                    sessionId,
+                    firebaseIdToken,
+                    UUID.randomUUID().toString(),
+                )
+            }
+        }
+        releaseNativeResources()
+        closed = true
+        transition(VoiceSessionEvent.CleanupCompleted)
+    }
+
+    private suspend fun finishCompletedLocked() {
+        if (closed || state == VoiceSessionState.Ending || state == VoiceSessionState.Ended) return
+        transition(VoiceSessionEvent.FinishRequested)
+        reconnectJob?.cancel()
+        reconnectJob = null
+        routeRecoveryJob?.cancel()
+        routeRecoveryJob = null
+        releaseCall("user_finished")
         releaseNativeResources()
         closed = true
         transition(VoiceSessionEvent.CleanupCompleted)
@@ -262,7 +395,7 @@ class VoiceSessionEngine(
         rtcSession?.close()
         rtcSession = null
         backendSessionId?.let { sessionId ->
-            runCatching { api.deleteCall(sessionId, reason) }
+            runCatching { api.deleteCall(sessionId, firebaseIdToken, reason) }
         }
         backendSessionId = null
     }
@@ -305,6 +438,7 @@ class VoiceSessionEngine(
                 state = state,
                 routeName = audioRoute.routeName(),
                 errorCode = error,
+                missionState = canonicalMissionState,
             ),
         )
     }

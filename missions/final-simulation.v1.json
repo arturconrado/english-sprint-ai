@@ -1,0 +1,19 @@
+{
+  "id": "afecf3cb-4f65-489d-a0b3-55d557d000ef",
+  "slug": "final-simulation",
+  "version": 1,
+  "title": "Final Simulation",
+  "description": "Combine introduction, technical evidence and a clear closing.",
+  "scenario": "You have a final conversation with an international hiring panel.",
+  "initial_question": "Introduce yourself, highlight one technical achievement and explain what you want next.",
+  "transfer_question": "What unique contribution would you bring to this international team?",
+  "target_skills": ["professional.introduction", "communication.impact", "communication.closing"],
+  "expected_duration_minutes": 10,
+  "difficulty": "intermediate",
+  "language_policy": "Tutor speaks concise English and accepts English learner responses.",
+  "correction_policy": "Select one primary and at most one distinct secondary correction.",
+  "maximum_attempts": 3,
+  "maximum_corrections": 2,
+  "completion_rules": "First attempt, retry, transfer, evidence, summary and review.",
+  "prompt_context": "Treat this as a concise final simulation and keep the learner in control."
+}

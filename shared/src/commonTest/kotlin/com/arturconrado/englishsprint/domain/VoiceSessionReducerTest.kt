@@ -135,6 +135,18 @@ class VoiceSessionReducerTest {
             LocalVoiceCommand.Resume,
             LocalVoiceCommandParser.parse(" Continuar ", 0.82),
         )
+        assertEquals(
+            LocalVoiceCommand.RepeatPrompt,
+            LocalVoiceCommandParser.parse("repetir pergunta", 0.91),
+        )
+        assertEquals(
+            LocalVoiceCommand.NeedMoreTime,
+            LocalVoiceCommandParser.parse("more time", 0.93),
+        )
+        assertEquals(
+            LocalVoiceCommand.RequestHelp,
+            LocalVoiceCommandParser.parse("me ajude", 0.94),
+        )
         assertNull(LocalVoiceCommandParser.parse("please stop now", 0.99))
         assertNull(LocalVoiceCommandParser.parse("stop!", 0.99))
         assertNull(LocalVoiceCommandParser.parse("unknown", 1.0))

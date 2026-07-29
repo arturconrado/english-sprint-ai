@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://english-sprint.ai/schemas/evaluation/1.0",
+  "title": "English Sprint attempt evaluation 1.0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "attempt_id",
+    "understood",
+    "response_completed",
+    "dimensions",
+    "candidate_corrections",
+    "strengths",
+    "missing_elements"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "attempt_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "understood": {
+      "type": "boolean"
+    },
+    "response_completed": {
+      "type": "boolean"
+    },
+    "dimensions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "clarity",
+        "completeness",
+        "structure",
+        "grammar",
+        "vocabulary",
+        "naturalness",
+        "fluency",
+        "pronunciation"
+      ],
+      "properties": {
+        "clarity": { "$ref": "#/$defs/dimension" },
+        "completeness": { "$ref": "#/$defs/dimension" },
+        "structure": { "$ref": "#/$defs/dimension" },
+        "grammar": { "$ref": "#/$defs/dimension" },
+        "vocabulary": { "$ref": "#/$defs/dimension" },
+        "naturalness": { "$ref": "#/$defs/dimension" },
+        "fluency": { "$ref": "#/$defs/dimension" },
+        "pronunciation": { "$ref": "#/$defs/dimension" }
+      }
+    },
+    "candidate_corrections": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "$ref": "#/$defs/correction"
+      }
+    },
+    "strengths": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 180
+      }
+    },
+    "missing_elements": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 180
+      }
+    }
+  },
+  "$defs": {
+    "boundedScore": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "dimension": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "confidence", "evidence"],
+      "properties": {
+        "score": { "$ref": "#/$defs/boundedScore" },
+        "confidence": { "$ref": "#/$defs/boundedScore" },
+        "evidence": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 180
+        }
+      }
+    },
+    "correction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "category",
+        "original",
+        "recommended",
+        "explanation",
+        "communication_impact",
+        "goal_relevance",
+        "confidence"
+      ],
+      "properties": {
+        "category": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)+$",
+          "maxLength": 80
+        },
+        "original": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "recommended": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "explanation": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240
+        },
+        "communication_impact": { "$ref": "#/$defs/boundedScore" },
+        "goal_relevance": { "$ref": "#/$defs/boundedScore" },
+        "confidence": { "$ref": "#/$defs/boundedScore" }
+      }
+    }
+  }
+}

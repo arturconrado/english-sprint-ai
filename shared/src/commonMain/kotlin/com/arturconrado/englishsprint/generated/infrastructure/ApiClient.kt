@@ -49,7 +49,11 @@ open class ApiClient(
         this.client = httpClient
     }
 
-    private val authentications: kotlin.collections.Map<String, Authentication>? = null
+    private val authentications: kotlin.collections.Map<String, Authentication> by lazy {
+        mapOf(
+                "firebaseBearer" to HttpBearerAuth("bearer"),
+                "internalBearer" to HttpBearerAuth("bearer"))
+    }
 
     companion object {
         const val BASE_URL: String = "http://localhost:8000"

@@ -1,0 +1,19 @@
+{
+  "id": "3c730105-4fdd-412c-a8a5-6a3fbb30f7ea",
+  "slug": "behavioral-challenge",
+  "version": 1,
+  "title": "Behavioral Challenge",
+  "description": "Answer a behavioral interview question with situation, action and result.",
+  "scenario": "A hiring manager asks about a difficult professional situation.",
+  "initial_question": "Tell me about a difficult challenge at work and how you handled it.",
+  "transfer_question": "Describe a different situation where you influenced people without authority.",
+  "target_skills": ["communication.situation_action_result", "grammar.past_tense", "communication.impact"],
+  "expected_duration_minutes": 10,
+  "difficulty": "intermediate",
+  "language_policy": "Tutor speaks concise English and accepts English learner responses.",
+  "correction_policy": "Select one primary and at most one distinct secondary correction.",
+  "maximum_attempts": 3,
+  "maximum_corrections": 2,
+  "completion_rules": "First attempt, retry, transfer, evidence, summary and review.",
+  "prompt_context": "Keep the example specific and end with a measurable or observable result."
+}

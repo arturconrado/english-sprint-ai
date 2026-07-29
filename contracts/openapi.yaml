@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: English Sprint AI API
-  version: 0.2.0
+  version: 0.5.0
   description: Contract-first API for the English Sprint AI platform.
 servers:
   - url: http://localhost:8000
@@ -11,6 +11,20 @@ tags:
     description: Process health and dependency readiness.
   - name: Realtime
     description: Realtime voice call signaling and lifecycle.
+  - name: Missions
+    description: Deterministic SPEAK-loop mission lifecycle.
+  - name: Pedagogy
+    description: Evidence, skills, summaries, and reviews.
+  - name: Account
+    description: Firebase identity, consent, export, and deletion.
+  - name: Product
+    description: Onboarding, diagnosis, sprint, plan, and progress.
+  - name: Billing
+    description: Server-authoritative entitlement and voice-minute accounting.
+  - name: Support
+    description: Sanitized learner support requests.
+  - name: Internal
+    description: Private worker commands unavailable to Android clients.
 paths:
   /healthz:
     get:
@@ -52,10 +66,13 @@ paths:
         - Realtime
       operationId: createRealtimeCall
       summary: Create a realtime voice call
-      description: Exchanges an Android WebRTC offer for a provider SDP answer.
+      description: Exchanges an authenticated Android WebRTC offer for a provider SDP answer after validating a server-side voice allowance reservation.
+      security:
+        - firebaseBearer: []
       parameters:
-        - $ref: "#/components/parameters/InstallationId"
         - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/MissionSessionHeader"
+        - $ref: "#/components/parameters/VoiceReservationHeader"
       requestBody:
         required: true
         content:
@@ -90,6 +107,8 @@ paths:
           $ref: "#/components/responses/Problem"
         "409":
           $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
         "413":
           $ref: "#/components/responses/Problem"
         "429":
@@ -111,6 +130,8 @@ paths:
       operationId: getRealtimeCall
       summary: Read sanitized realtime-call metadata
       description: Returns operational metadata without provider identifiers or conversation data.
+      security:
+        - firebaseBearer: []
       responses:
         "200":
           description: Current call metadata.
@@ -132,6 +153,8 @@ paths:
       operationId: deleteRealtimeCall
       summary: Idempotently terminate a realtime call
       description: Terminates an active call and succeeds when it is already absent.
+      security:
+        - firebaseBearer: []
       parameters:
         - name: X-Termination-Reason
           in: header
@@ -149,18 +172,883 @@ paths:
           $ref: "#/components/responses/Problem"
         "503":
           $ref: "#/components/responses/Problem"
+  /v1/missions:
+    get:
+      tags: [Missions]
+      operationId: listMissions
+      summary: List immutable mission versions available to learners
+      description: Returns versioned mission metadata without requiring authentication.
+      responses:
+        "200":
+          description: Available missions.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Mission"
+  /v1/missions/{mission_id}:
+    parameters:
+      - $ref: "#/components/parameters/MissionId"
+    get:
+      tags: [Missions]
+      operationId: getMission
+      summary: Read one mission
+      description: Returns the immutable public definition of one mission.
+      responses:
+        "200":
+          description: Mission definition.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Mission"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions:
+    post:
+      tags: [Missions]
+      operationId: createMissionSession
+      summary: Create an authenticated mission session
+      description: Creates a session owned by the Firebase-authenticated account using the account's recorded consent choices.
+      security:
+        - firebaseBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMissionSessionRequest"
+      responses:
+        "201":
+          description: Account-owned session created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+    get:
+      tags: [Missions]
+      operationId: getMissionSession
+      summary: Recover the canonical mission state
+      description: Returns the backend-authoritative state after validating ownership.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Canonical mission state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}/attempts:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Missions]
+      operationId: createMissionAttempt
+      summary: Record one completed attempt and queue its evaluation
+      description: Records attempt metadata without accepting audio or transcript content.
+      security:
+        - firebaseBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateAttemptRequest"
+      responses:
+        "202":
+          description: Attempt accepted for asynchronous evaluation.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttemptReceipt"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}/commands:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Missions]
+      operationId: sendMissionCommand
+      summary: Send a typed command through the shared command bus
+      description: Applies one idempotent command with optimistic state versioning.
+      security:
+        - firebaseBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MissionCommandRequest"
+      responses:
+        "200":
+          description: Updated canonical state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Missions]
+      operationId: cancelMissionSession
+      summary: Idempotently cancel and clean up a mission
+      description: Cancels a session without creating further pedagogical evidence.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Cancelled canonical state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}/complete:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Missions]
+      operationId: completeMissionSession
+      summary: Complete a summarized mission and schedule its review
+      description: Finalizes a summarized mission using optimistic state versioning.
+      security:
+        - firebaseBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StateVersionRequest"
+      responses:
+        "200":
+          description: Completed canonical state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/mission-sessions/{session_id}/summary:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+    get:
+      tags: [Pedagogy]
+      operationId: getMissionSummary
+      summary: Read sanitized evidence and the next review
+      description: Returns only evidence permitted by the session retention policy.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Mission summary.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSummary"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/skills:
+    get:
+      tags: [Pedagogy]
+      operationId: listSkills
+      summary: List skill states for the mission-session user
+      description: Returns monotonic skill states backed by append-only evidence.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Monotonic skill states.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserSkillState"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /v1/reviews/due:
+    get:
+      tags: [Pedagogy]
+      operationId: listDueReviews
+      summary: List scheduled reviews due for the mission-session user
+      description: Returns reviews due now without exposing retained attempt content.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Due review items.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReviewItem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /v1/reviews/{review_id}/complete:
+    parameters:
+      - name: review_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - $ref: "#/components/parameters/IdempotencyKey"
+    post:
+      tags: [Pedagogy]
+      operationId: completeReview
+      summary: Complete a due review and schedule the next interval
+      description: Idempotently records review completion and schedules the 3-day or 7-day follow-up when applicable.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Completed review and optional next review.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewCompletion"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/me:
+    get:
+      tags: [Account]
+      operationId: getCurrentUser
+      summary: Resolve the authenticated Firebase user
+      description: Resolves the verified Firebase identity to the minimal internal account projection.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Internal account projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /v1/account/sessions/revoke:
+    post:
+      tags: [Account]
+      operationId: revokeAccountSessions
+      summary: Revoke all Firebase refresh tokens for the account
+      description: Invalidates refresh tokens so every device must authenticate again.
+      security:
+        - firebaseBearer: []
+      responses:
+        "204":
+          description: Existing sessions were revoked.
+        "401":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /v1/consents:
+    put:
+      tags: [Account]
+      operationId: updateConsents
+      summary: Record versioned processing, analytics, retention, and notification choices
+      description: Appends versioned consent decisions and returns their current projection.
+      security:
+        - firebaseBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConsentSettings"
+      responses:
+        "200":
+          description: Current consent projection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConsentSettings"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /v1/onboarding:
+    get:
+      tags: [Product]
+      operationId: getOnboarding
+      description: Returns the authenticated learner's current professional onboarding profile.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Current onboarding profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingProfile"
+        "401":
+          $ref: "#/components/responses/Problem"
+    put:
+      tags: [Product]
+      operationId: updateOnboarding
+      description: Validates and stores the learner's goal, usage context, and IANA timezone.
+      security:
+        - firebaseBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OnboardingProfile"
+      responses:
+        "200":
+          description: Updated onboarding profile.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingProfile"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /v1/diagnostics:
+    post:
+      tags: [Product]
+      operationId: startDiagnostic
+      summary: Start the one promotional voice diagnosis
+      description: Creates or replays the single ten-minute promotional diagnosis for the account.
+      security:
+        - firebaseBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "201":
+          description: Diagnostic started.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Diagnostic"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+    get:
+      tags: [Product]
+      operationId: getDiagnostic
+      description: Returns the status and sanitized usage metrics of the account diagnosis.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Current diagnostic.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Diagnostic"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/sprints:
+    post:
+      tags: [Product]
+      operationId: createSprint
+      summary: Create an idempotent seven-day plan
+      description: Creates the canonical seven-day mission sequence after diagnosis completion.
+      security:
+        - firebaseBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "201":
+          description: Seven-day sprint created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SprintPlan"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/sprints/current:
+    get:
+      tags: [Product]
+      operationId: getCurrentSprint
+      description: Returns the active seven-day plan and availability of each day.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Current seven-day sprint.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SprintPlan"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/progress:
+    get:
+      tags: [Product]
+      operationId: getProgress
+      description: Returns aggregated mission, review, skill, and remaining-voice progress.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Sanitized learning and usage progress.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Progress"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /v1/notification-preferences:
+    get:
+      tags: [Product]
+      operationId: getNotificationPreferences
+      description: Returns the account's bounded reminder and timezone preferences.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Current preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+        "401":
+          $ref: "#/components/responses/Problem"
+    put:
+      tags: [Product]
+      operationId: updateNotificationPreferences
+      description: Validates and stores consent-aware daily and review reminder preferences.
+      security:
+        - firebaseBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NotificationPreferences"
+      responses:
+        "200":
+          description: Updated preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NotificationPreferences"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /v1/billing/status:
+    get:
+      tags: [Billing]
+      operationId: getBillingStatus
+      description: Returns the backend-authoritative subscription state and available seconds.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Server-authoritative entitlement and minute balance.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingStatus"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /v1/billing/restore:
+    post:
+      tags: [Billing]
+      operationId: restoreBilling
+      summary: Refresh entitlement from RevenueCat
+      description: Queries RevenueCat by the internal account ID and refreshes the server snapshot.
+      security:
+        - firebaseBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Refreshed billing status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BillingStatus"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /v1/billing/reservations:
+    post:
+      tags: [Billing]
+      operationId: reserveVoiceMinutes
+      summary: Atomically reserve voice time before call creation
+      description: Reserves promotional or subscribed seconds under a database row lock.
+      security:
+        - firebaseBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReserveVoiceUsageRequest"
+      responses:
+        "201":
+          description: Time reserved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VoiceUsageReservation"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "402":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /v1/webhooks/revenuecat:
+    post:
+      tags: [Billing]
+      operationId: receiveRevenueCatWebhook
+      summary: Receive an authenticated and idempotent RevenueCat event
+      description: Applies one authenticated provider event exactly once without trusting the client.
+      parameters:
+        - name: Authorization
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: "^Bearer .+$"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RevenueCatWebhook"
+      responses:
+        "200":
+          description: Event accepted or replayed.
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /v1/account/export:
+    post:
+      tags: [Account]
+      operationId: requestAccountExport
+      description: Generates a seven-day encrypted export package for the authenticated account.
+      security:
+        - firebaseBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Export request accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataRightRequest"
+        "401":
+          $ref: "#/components/responses/Problem"
+    get:
+      tags: [Account]
+      operationId: getAccountExport
+      description: Returns the status of the latest account export request.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Latest export request status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataRightRequest"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/account/export/content:
+    get:
+      tags: [Account]
+      operationId: downloadAccountExport
+      summary: Download the authenticated account export
+      description: Returns a sanitized machine-readable export after the encrypted package has been generated.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Current account export.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AccountExport"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/account/deletion:
+    post:
+      tags: [Account]
+      operationId: requestAccountDeletion
+      description: Deletes the Firebase identity and scrubs personal and retained learning content.
+      security:
+        - firebaseBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Deletion request accepted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataRightRequest"
+        "401":
+          $ref: "#/components/responses/Problem"
+    get:
+      tags: [Account]
+      operationId: getAccountDeletion
+      description: Returns the latest deletion request status while the account remains addressable.
+      security:
+        - firebaseBearer: []
+      responses:
+        "200":
+          description: Latest deletion request status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DataRightRequest"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /v1/support/requests:
+    post:
+      tags: [Support]
+      operationId: createSupportRequest
+      description: Encrypts and stores a bounded support request without voice or transcript data.
+      security:
+        - firebaseBearer: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSupportRequest"
+      responses:
+        "201":
+          description: Sanitized support request created.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SupportRequest"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /internal/support/requests:
+    get:
+      tags: [Internal]
+      operationId: listSupportRequestsInternal
+      summary: List the operator support queue
+      description: Returns sanitized support metadata to an authenticated private operator.
+      security:
+        - internalBearer: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          description: Optional support status filter.
+          schema:
+            type: string
+            enum: [open, in_progress, resolved, closed]
+      responses:
+        "200":
+          description: Bounded support queue ordered oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: "#/components/schemas/InternalSupportItem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /internal/support/requests/{request_id}:
+    parameters:
+      - name: request_id
+        in: path
+        required: true
+        description: Internal support request UUID.
+        schema:
+          type: string
+          format: uuid
+    get:
+      tags: [Internal]
+      operationId: getSupportRequestInternal
+      summary: Read one support request
+      description: Decrypts the bounded support description only for an authenticated operator.
+      security:
+        - internalBearer: []
+      responses:
+        "200":
+          description: Support request with decrypted operator-only description.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalSupportDetail"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+    post:
+      tags: [Internal]
+      operationId: updateSupportRequestInternal
+      summary: Advance a support request
+      description: Changes only the typed operational status; no free-form operator notes are stored.
+      security:
+        - internalBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSupportRequest"
+      responses:
+        "200":
+          description: Updated sanitized support metadata.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InternalSupportItem"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /internal/attempts/{attempt_id}/evaluate:
+    parameters:
+      - name: attempt_id
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+    post:
+      tags: [Internal]
+      operationId: evaluateAttemptInternal
+      summary: Queue one typed attempt evaluation
+      description: Queues an ID-only evaluation message for the private worker.
+      security:
+        - internalBearer: []
+      responses:
+        "202":
+          description: Evaluation queued.
+        "401":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
+  /internal/mission-sessions/{session_id}/advance:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+    post:
+      tags: [Internal]
+      operationId: advanceMissionInternal
+      summary: Apply one typed domain event
+      description: Applies a deterministic state event from an authorized service.
+      security:
+        - internalBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InternalAdvanceRequest"
+      responses:
+        "200":
+          description: Updated canonical state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionSession"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /internal/mission-sessions/{session_id}/summarize:
+    parameters:
+      - $ref: "#/components/parameters/MissionSessionId"
+    post:
+      tags: [Internal]
+      operationId: summarizeMissionInternal
+      summary: Compose a bounded mission summary
+      description: Queues deterministic or bounded-model summary composition.
+      security:
+        - internalBearer: []
+      responses:
+        "202":
+          description: Summary queued.
+        "401":
+          $ref: "#/components/responses/Problem"
+        "503":
+          $ref: "#/components/responses/Problem"
 components:
+  securitySchemes:
+    firebaseBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: Firebase-ID-token
+    internalBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: internal-service-token
   parameters:
-    InstallationId:
-      name: X-Installation-Id
-      in: header
-      required: true
-      description: Opaque installation identifier. It is HMAC-hashed before persistence.
-      schema:
-        type: string
-        minLength: 16
-        maxLength: 128
-        pattern: "^[A-Za-z0-9._-]+$"
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -172,6 +1060,36 @@ components:
       name: session_id
       in: path
       required: true
+      schema:
+        type: string
+        format: uuid
+    MissionId:
+      name: mission_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MissionSessionId:
+      name: session_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    MissionSessionHeader:
+      name: X-Mission-Session-Id
+      in: header
+      required: false
+      description: Mission session to link. Authorization is required when present.
+      schema:
+        type: string
+        format: uuid
+    VoiceReservationHeader:
+      name: X-Voice-Reservation-Id
+      in: header
+      required: true
+      description: Active server-side allowance reservation owned by the authenticated account.
       schema:
         type: string
         format: uuid
@@ -328,3 +1246,791 @@ components:
         request_id:
           type: string
           format: uuid
+    Mission:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - slug
+        - version
+        - title
+        - description
+        - scenario
+        - initial_question
+        - transfer_question
+        - target_skills
+        - expected_duration_minutes
+        - difficulty
+        - maximum_attempts
+        - maximum_corrections
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        version:
+          type: integer
+          minimum: 1
+        title:
+          type: string
+        description:
+          type: string
+        scenario:
+          type: string
+        initial_question:
+          type: string
+        transfer_question:
+          type: string
+        target_skills:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        expected_duration_minutes:
+          type: integer
+          minimum: 1
+          maximum: 30
+        difficulty:
+          type: string
+        maximum_attempts:
+          type: integer
+          const: 3
+        maximum_corrections:
+          type: integer
+          minimum: 1
+          maximum: 2
+    MissionState:
+      type: string
+      enum:
+        - MISSION_IDLE
+        - MISSION_STARTING
+        - SCENARIO_PRESENTING
+        - FIRST_ATTEMPT_WAITING
+        - FIRST_ATTEMPT_RECEIVED
+        - FIRST_ATTEMPT_EVALUATING
+        - CORRECTION_PREPARING
+        - CORRECTION_PRESENTING
+        - RETRY_WAITING
+        - RETRY_RECEIVED
+        - RETRY_EVALUATING
+        - TRANSFER_PRESENTING
+        - TRANSFER_WAITING
+        - TRANSFER_RECEIVED
+        - TRANSFER_EVALUATING
+        - MISSION_SUMMARIZING
+        - MISSION_COMPLETED
+        - MISSION_CANCELLED
+        - MISSION_FAILED
+    CreateMissionSessionRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - mission_id
+      properties:
+        mission_id:
+          type: string
+          format: uuid
+    MissionSession:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - mission_id
+        - mission_version
+        - state
+        - state_version
+        - processing_consent
+        - content_retention_consent
+        - created_at
+        - updated_at
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        mission_id:
+          type: string
+          format: uuid
+        mission_version:
+          type: integer
+          minimum: 1
+        state:
+          $ref: "#/components/schemas/MissionState"
+        state_version:
+          type: integer
+          minimum: 0
+        processing_consent:
+          type: boolean
+        content_retention_consent:
+          type: boolean
+        voice_session_id:
+          type:
+            - string
+            - "null"
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        completed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    AttemptKind:
+      type: string
+      enum: [first, retry, transfer]
+    HelpLevel:
+      type: string
+      enum: [NO_HELP, FIRST_WORD, KEYWORDS, SHORT_MODEL, FULL_MODEL]
+    CreateAttemptRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - client_attempt_id
+        - state_version
+        - kind
+        - help_level
+        - started_at
+        - completed_at
+      properties:
+        client_attempt_id:
+          type: string
+          format: uuid
+        state_version:
+          type: integer
+          minimum: 0
+        kind:
+          $ref: "#/components/schemas/AttemptKind"
+        help_level:
+          $ref: "#/components/schemas/HelpLevel"
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+        used_time_extension:
+          type: boolean
+          default: false
+    AttemptReceipt:
+      type: object
+      additionalProperties: false
+      required: [attempt_id, state, state_version, evaluation_status]
+      properties:
+        attempt_id:
+          type: string
+          format: uuid
+        state:
+          $ref: "#/components/schemas/MissionState"
+        state_version:
+          type: integer
+          minimum: 0
+        evaluation_status:
+          type: string
+          enum: [queued, processing, completed, failed, dead_letter]
+    MissionCommand:
+      type: string
+      enum:
+        - repeat_prompt
+        - need_more_time
+        - request_help
+        - pause
+        - resume
+        - stop_response
+        - cancel
+        - finish
+    MissionCommandRequest:
+      type: object
+      additionalProperties: false
+      required: [command, state_version]
+      properties:
+        command:
+          $ref: "#/components/schemas/MissionCommand"
+        state_version:
+          type: integer
+          minimum: 0
+    StateVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [state_version]
+      properties:
+        state_version:
+          type: integer
+          minimum: 0
+    InternalAdvanceRequest:
+      type: object
+      additionalProperties: false
+      required: [event, state_version]
+      properties:
+        event:
+          type: string
+          enum:
+            - START_REQUESTED
+            - SESSION_STARTED
+            - SCENARIO_PRESENTED
+            - ATTEMPT_COMPLETED
+            - EVALUATION_QUEUED
+            - EVALUATION_SUCCEEDED
+            - EVALUATION_FAILED
+            - CORRECTION_PREPARED
+            - CORRECTION_PRESENTED
+            - TRANSFER_PRESENTED
+            - SUMMARY_COMPLETED
+            - CANCEL_REQUESTED
+            - FAILURE_RECORDED
+        state_version:
+          type: integer
+          minimum: 0
+    SkillState:
+      type: string
+      enum:
+        - UNKNOWN
+        - RECOGNIZED
+        - PRODUCED_WITH_HELP
+        - PRODUCED_SPONTANEOUSLY
+        - TRANSFERRED
+    UserSkillState:
+      type: object
+      additionalProperties: false
+      required: [skill_id, slug, state, updated_at]
+      properties:
+        skill_id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        state:
+          $ref: "#/components/schemas/SkillState"
+        updated_at:
+          type: string
+          format: date-time
+    ReviewItem:
+      type: object
+      additionalProperties: false
+      required:
+        [review_id, mission_id, skill_id, review_type, scheduled_at, status, sequence_number]
+      properties:
+        review_id:
+          type: string
+          format: uuid
+        mission_id:
+          type: string
+          format: uuid
+        skill_id:
+          type: string
+          format: uuid
+        review_type:
+          type: string
+          enum: [targeted_correction, generic_skill]
+        scheduled_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [scheduled, due, completed, cancelled]
+        sequence_number:
+          type: integer
+          minimum: 1
+          maximum: 3
+    ReviewCompletion:
+      type: object
+      additionalProperties: false
+      required: [completed_review_id]
+      properties:
+        completed_review_id:
+          type: string
+          format: uuid
+        next_review:
+          anyOf:
+            - $ref: "#/components/schemas/ReviewItem"
+            - type: "null"
+    MissionSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - session_id
+        - mission_id
+        - state
+        - attempt_count
+        - content_retained
+        - evidence_available
+      properties:
+        session_id:
+          type: string
+          format: uuid
+        mission_id:
+          type: string
+          format: uuid
+        state:
+          $ref: "#/components/schemas/MissionState"
+        attempt_count:
+          type: integer
+          minimum: 0
+          maximum: 3
+        strength:
+          type:
+            - string
+            - "null"
+        primary_correction:
+          type:
+            - string
+            - "null"
+        skill_state:
+          oneOf:
+            - $ref: "#/components/schemas/SkillState"
+            - type: "null"
+        next_review_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+        content_retained:
+          type: boolean
+        evidence_available:
+          type: boolean
+    CurrentUser:
+      type: object
+      additionalProperties: false
+      required: [user_id, status, auth_provider, created_at]
+      properties:
+        user_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [active, deleting, deleted, disabled]
+        auth_provider:
+          type: string
+          enum: [google]
+        onboarding_completed:
+          type: boolean
+          default: false
+        created_at:
+          type: string
+          format: date-time
+    ConsentSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - policy_version
+        - pedagogical_processing
+        - analytics
+        - content_retention
+        - notifications
+      properties:
+        policy_version:
+          type: string
+          minLength: 1
+          maxLength: 32
+        pedagogical_processing:
+          type: boolean
+        analytics:
+          type: boolean
+        content_retention:
+          type: boolean
+        notifications:
+          type: boolean
+    OnboardingProfile:
+      type: object
+      additionalProperties: false
+      required:
+        - professional_goal
+        - english_context
+        - timezone
+      properties:
+        professional_goal:
+          type: string
+          enum:
+            - international_interviews
+            - global_team_communication
+            - technical_presentations
+        english_context:
+          type: string
+          enum: [rarely, monthly, weekly, daily]
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 64
+        completed:
+          type: boolean
+          readOnly: true
+    Diagnostic:
+      type: object
+      additionalProperties: false
+      required:
+        - diagnostic_id
+        - status
+        - promotional_seconds
+        - used_seconds
+        - created_at
+      properties:
+        diagnostic_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [ready, active, completed, failed, expired]
+        promotional_seconds:
+          type: integer
+          const: 600
+        used_seconds:
+          type: integer
+          minimum: 0
+          maximum: 600
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    SprintDay:
+      type: object
+      additionalProperties: false
+      required: [day, mission_id, title, status]
+      properties:
+        day:
+          type: integer
+          minimum: 1
+          maximum: 7
+        mission_id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        status:
+          type: string
+          enum: [locked, available, completed, skipped]
+        scheduled_for:
+          type: string
+          format: date
+    SprintPlan:
+      type: object
+      additionalProperties: false
+      required: [sprint_id, status, starts_on, ends_on, days]
+      properties:
+        sprint_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [active, completed, cancelled]
+        starts_on:
+          type: string
+          format: date
+        ends_on:
+          type: string
+          format: date
+        days:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: "#/components/schemas/SprintDay"
+    Progress:
+      type: object
+      additionalProperties: false
+      required:
+        - completed_missions
+        - completed_reviews
+        - practiced_skills
+        - current_streak_days
+        - voice_seconds_remaining
+      properties:
+        completed_missions:
+          type: integer
+          minimum: 0
+        completed_reviews:
+          type: integer
+          minimum: 0
+        practiced_skills:
+          type: integer
+          minimum: 0
+        current_streak_days:
+          type: integer
+          minimum: 0
+          maximum: 7
+        voice_seconds_remaining:
+          type: integer
+          minimum: 0
+        next_review_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    NotificationPreferences:
+      type: object
+      additionalProperties: false
+      required: [enabled, daily_reminder, review_reminder, timezone]
+      properties:
+        enabled:
+          type: boolean
+        daily_reminder:
+          type: boolean
+        review_reminder:
+          type: boolean
+        timezone:
+          type: string
+          minLength: 1
+          maxLength: 64
+        reminder_hour_local:
+          type: integer
+          minimum: 7
+          maximum: 22
+          default: 19
+    BillingStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - entitlement
+        - subscription_status
+        - access_mode
+        - cycle_allowance_seconds
+        - remaining_seconds
+        - free_beta_seconds_remaining
+        - promotional_seconds_remaining
+      properties:
+        entitlement:
+          type: string
+          description: Effective entitlement; payment is not implied for free-beta users.
+          enum: [free_beta, paid_beta, none]
+        subscription_status:
+          type: string
+          enum: [inactive, active, grace_period, billing_issue, expired]
+        access_mode:
+          type: string
+          description: Server-authoritative product access granted to this account.
+          enum: [free_beta, paid_subscription, unavailable]
+        cycle_allowance_seconds:
+          type: integer
+          const: 7200
+        remaining_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+        free_beta_seconds_remaining:
+          type: integer
+          description: Remaining lifetime allowance for an enrolled free-beta account.
+          minimum: 0
+          maximum: 86400
+        promotional_seconds_remaining:
+          type: integer
+          minimum: 0
+          maximum: 600
+        period_ends_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    ReserveVoiceUsageRequest:
+      type: object
+      additionalProperties: false
+      required: [requested_seconds, purpose]
+      properties:
+        requested_seconds:
+          type: integer
+          minimum: 60
+          maximum: 1800
+        purpose:
+          type: string
+          enum: [diagnostic, mission]
+    VoiceUsageReservation:
+      type: object
+      additionalProperties: false
+      required:
+        - reservation_id
+        - reserved_seconds
+        - source
+        - expires_at
+        - remaining_seconds
+      properties:
+        reservation_id:
+          type: string
+          format: uuid
+        reserved_seconds:
+          type: integer
+          minimum: 1
+        source:
+          type: string
+          enum: [promotional, subscription, free_beta]
+        expires_at:
+          type: string
+          format: date-time
+        remaining_seconds:
+          type: integer
+          minimum: 0
+    RevenueCatWebhook:
+      type: object
+      additionalProperties: false
+      required: [api_version, event]
+      properties:
+        api_version:
+          type: string
+        event:
+          $ref: "#/components/schemas/RevenueCatWebhookEvent"
+    RevenueCatWebhookEvent:
+      type: object
+      additionalProperties: false
+      required: [id, type, app_user_id, event_timestamp_ms]
+      properties:
+        id:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          minLength: 1
+        app_user_id:
+          type: string
+          minLength: 1
+        event_timestamp_ms:
+          type: integer
+          minimum: 0
+        expiration_at_ms:
+          type:
+            - integer
+            - "null"
+        entitlement_ids:
+          type: array
+          items:
+            type: string
+        environment:
+          type: string
+    DataRightRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, request_type, status, requested_at]
+      properties:
+        request_id:
+          type: string
+          format: uuid
+        request_type:
+          type: string
+          enum: [export, deletion]
+        status:
+          type: string
+          enum: [requested, processing, completed, failed, cancelled]
+        requested_at:
+          type: string
+          format: date-time
+        completed_at:
+          type:
+            - string
+            - "null"
+          format: date-time
+    AccountExport:
+      type: object
+      additionalProperties: false
+      required:
+        [generated_at, account, consents, onboarding, diagnostic, sprint, progress, billing]
+      properties:
+        generated_at:
+          type: string
+          format: date-time
+        account:
+          type: object
+          additionalProperties: false
+          required: [user_id, status, created_at]
+          properties:
+            user_id:
+              type: string
+              format: uuid
+            status:
+              type: string
+            created_at:
+              type: string
+              format: date-time
+        consents:
+          type: object
+          additionalProperties:
+            type: boolean
+        onboarding:
+          anyOf:
+            - $ref: "#/components/schemas/OnboardingProfile"
+            - type: "null"
+        diagnostic:
+          anyOf:
+            - $ref: "#/components/schemas/Diagnostic"
+            - type: "null"
+        sprint:
+          anyOf:
+            - $ref: "#/components/schemas/SprintPlan"
+            - type: "null"
+        progress:
+          $ref: "#/components/schemas/Progress"
+        billing:
+          $ref: "#/components/schemas/BillingStatus"
+    CreateSupportRequest:
+      type: object
+      additionalProperties: false
+      required: [category, description]
+      properties:
+        category:
+          type: string
+          enum: [access, billing, voice, privacy, learning, other]
+        description:
+          type: string
+          minLength: 10
+          maxLength: 1000
+    SupportRequest:
+      type: object
+      additionalProperties: false
+      required: [request_id, category, status, created_at]
+      properties:
+        request_id:
+          type: string
+          format: uuid
+        category:
+          type: string
+          enum: [access, billing, voice, privacy, learning, other]
+        status:
+          type: string
+          enum: [open, in_progress, resolved, closed]
+        created_at:
+          type: string
+          format: date-time
+    InternalSupportItem:
+      type: object
+      additionalProperties: false
+      required: [request_id, user_id, category, status, created_at, updated_at]
+      properties:
+        request_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+          format: uuid
+        category:
+          type: string
+          enum: [access, billing, voice, privacy, learning, other]
+        status:
+          type: string
+          enum: [open, in_progress, resolved, closed]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    InternalSupportDetail:
+      allOf:
+        - $ref: "#/components/schemas/InternalSupportItem"
+        - type: object
+          additionalProperties: false
+          required: [description]
+          properties:
+            description:
+              type: string
+              minLength: 10
+              maxLength: 1000
+    UpdateSupportRequest:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [in_progress, resolved, closed]

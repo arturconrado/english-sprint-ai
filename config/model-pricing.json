@@ -1,0 +1,14 @@
+{
+  "as_of": "2026-07-28",
+  "currency": "USD",
+  "disclaimer": "Operational estimate only; provider invoices remain authoritative.",
+  "models": {
+    "gpt-5.4-mini-2026-03-17": {
+      "cached_input_per_million": "0.075",
+      "input_per_million": "0.75",
+      "output_per_million": "4.50"
+    }
+  },
+  "schema_version": "1.0",
+  "source": "https://developers.openai.com/api/docs/models/gpt-5.4-mini"
+}
