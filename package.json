@@ -8,7 +8,7 @@
     "lint:openapi": "spectral lint contracts/openapi.yaml"
   },
   "devDependencies": {
-    "playwright": "1.61.1",
+    "playwright": "1.62.0",
     "@stoplight/spectral-cli": "6.16.2"
   },
   "overrides": {
